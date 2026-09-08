@@ -1,0 +1,14 @@
+PREFIX : <https://example.org/procurement#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?order ?supplierName ?amount
+WHERE {
+    ?order a :PurchaseOrder ;
+        :orderedFrom ?supplier ;
+        :orderStatus "PENDING"^^xsd:string ;
+        :amount ?amount .
+    ?supplier a :Supplier ;
+        :supplierStatus "DISABLED"^^xsd:string ;
+        :supplierName ?supplierName .
+}
+ORDER BY ?order

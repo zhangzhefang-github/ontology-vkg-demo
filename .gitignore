@@ -1,4 +1,7 @@
 # Byte-compiled / optimized / DLL files
+.artifacts/
+*.jar
+
 __pycache__/
 *.py[codz]
 *$py.class

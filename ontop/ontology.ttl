@@ -1,0 +1,38 @@
+@prefix : <https://example.org/procurement#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/procurement> a owl:Ontology ;
+    rdfs:label "采购业务本体"@zh .
+
+:Supplier a owl:Class ; rdfs:label "供应商"@zh .
+:PurchaseOrder a owl:Class ; rdfs:label "采购订单"@zh .
+:SupplyDisruptionEvent a owl:Class ; rdfs:label "供应中断事件"@zh .
+:DeliverySuspensionEvent a owl:Class ; rdfs:label "交付暂停事件"@zh .
+:NeedsReviewOrder a owl:Class ; rdfs:label "需要供应风险复核的订单"@zh .
+
+:supplierName a owl:DatatypeProperty ;
+    rdfs:domain :Supplier ; rdfs:range xsd:string ;
+    rdfs:label "供应商名称"@zh .
+:supplierStatus a owl:DatatypeProperty ;
+    rdfs:domain :Supplier ; rdfs:range xsd:string ;
+    rdfs:label "供应商状态"@zh .
+:orderStatus a owl:DatatypeProperty ;
+    rdfs:domain :PurchaseOrder ; rdfs:range xsd:string ;
+    rdfs:label "订单状态"@zh .
+:amount a owl:DatatypeProperty ;
+    rdfs:domain :PurchaseOrder ; rdfs:range xsd:decimal ;
+    rdfs:label "订单金额"@zh .
+:orderedFrom a owl:ObjectProperty ;
+    rdfs:domain :PurchaseOrder ; rdfs:range :Supplier ;
+    rdfs:label "采购自"@zh ;
+    rdfs:comment "PurchaseOrder orderedFrom Supplier：订单所属的供应商。"@zh .
+
+:affectsSupplier a owl:ObjectProperty ;
+    rdfs:domain :DeliverySuspensionEvent ; rdfs:range :Supplier ;
+    rdfs:label "影响供应商"@zh .
+:isCurrent a owl:DatatypeProperty ;
+    rdfs:domain :DeliverySuspensionEvent ; rdfs:range xsd:boolean ;
+    rdfs:label "当前有效"@zh .

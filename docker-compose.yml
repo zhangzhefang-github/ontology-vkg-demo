@@ -1,0 +1,82 @@
+name: ontology-vkg-demo
+
+services:
+  mysql:
+    image: mysql:8.4.8
+    environment:
+      MYSQL_ROOT_PASSWORD: demo_root_password
+      MYSQL_DATABASE: procurement
+      MYSQL_USER: ontop
+      MYSQL_PASSWORD: demo_ontop_password
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_bin
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-13306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      # TCP avoids the temporary socket-only server used during initialization.
+      # Reading both tables ensures initialization and application login are ready.
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP
+          -h 127.0.0.1 -u "$${MYSQL_USER}" "$${MYSQL_DATABASE}"
+          -Nse 'SELECT 1 FROM supplier JOIN purchase_order USING (supplier_id) LIMIT 1'
+          | grep -qx 1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  ontop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ontology-vkg-demo-ontop:5.5.0-mysql8.4.0
+    environment:
+      ONTOP_ONTOLOGY_FILE: /opt/ontop/input/ontology.ttl
+      ONTOP_MAPPING_FILE: /opt/ontop/input/mapping.obda
+      ONTOP_PROPERTIES_FILE: /opt/ontop/input/ontop.properties
+      ONTOP_DEV_MODE: "true"
+      ONTOP_LOG_LEVEL: debug
+      ONTOP_HEALTHCHECK: query
+      # Official probe concatenates a GET URL; avoid an unescaped '#' fragment.
+      ONTOP_HEALTHCHECK_QUERY: "SELECT ?entity WHERE { ?entity a ?type } LIMIT 1"
+      ONTOP_HEALTHCHECK_QUERY_INTERVAL: "30"
+    volumes:
+      - ./ontop:/opt/ontop/input:ro
+    ports:
+      - "127.0.0.1:${ONTOP_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Inherit the official image's /opt/ontop/healthcheck.sh probe.
+    healthcheck:
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  reasoner:
+    profiles: ["phase2"]
+    build:
+      context: .
+      dockerfile: Dockerfile.reasoner
+    image: ontology-vkg-demo-reasoner:phase2
+    environment:
+      ONTOP_ENDPOINT: http://ontop:8080/sparql
+    volumes:
+      - ./reasoner:/app/reasoner:ro
+      - ./queries:/app/queries:ro
+      - ./rules:/app/rules:ro
+      - ./ontop:/app/ontop:ro
+    working_dir: /app
+    depends_on:
+      ontop:
+        condition: service_healthy
+
+volumes:
+  mysql-data:

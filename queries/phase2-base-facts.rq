@@ -1,0 +1,25 @@
+PREFIX : <https://example.org/procurement#>
+
+CONSTRUCT {
+    ?order a :PurchaseOrder ;
+        :orderedFrom ?orderSupplier ;
+        :orderStatus ?orderStatus .
+    ?orderSupplier a :Supplier ;
+        :supplierName ?orderSupplierName .
+    ?event a ?directEventType ;
+        :affectsSupplier ?affectedSupplier ;
+        :isCurrent ?isCurrent .
+    ?affectedSupplier a :Supplier ;
+        :supplierName ?affectedSupplierName .
+}
+WHERE {
+    ?order a :PurchaseOrder ;
+        :orderedFrom ?orderSupplier ;
+        :orderStatus ?orderStatus .
+    ?orderSupplier :supplierName ?orderSupplierName .
+    ?event :affectsSupplier ?affectedSupplier ;
+        :isCurrent ?isCurrent ;
+        a ?directEventType .
+    ?affectedSupplier :supplierName ?affectedSupplierName .
+    FILTER(?directEventType = :DeliverySuspensionEvent)
+}

@@ -1,0 +1,17 @@
+[PrefixDeclaration]
+:       https://example.org/procurement#
+xsd:    http://www.w3.org/2001/XMLSchema#
+
+[MappingDeclaration] @collection [[
+mappingId   SupplierMapping
+target      <https://example.org/supplier/{supplier_id}> a :Supplier ; :supplierName {supplier_name}^^xsd:string ; :supplierStatus {supplier_status}^^xsd:string .
+source      SELECT supplier_id, supplier_name, supplier_status FROM supplier
+
+mappingId   PurchaseOrderMapping
+target      <https://example.org/purchase-order/{order_id}> a :PurchaseOrder ; :orderStatus {order_status}^^xsd:string ; :amount {amount}^^xsd:decimal ; :orderedFrom <https://example.org/supplier/{supplier_id}> .
+source      SELECT order_id, supplier_id, amount, order_status FROM purchase_order
+
+mappingId   SupplyDisruptionEventMapping
+target      <https://example.org/event/{event_id}> a <https://example.org/procurement#{event_type}> ; :affectsSupplier <https://example.org/supplier/{affected_supplier_id}> ; :isCurrent {is_current}^^xsd:boolean .
+source      SELECT event_id, affected_supplier_id, event_type, is_current FROM supply_disruption_event
+]]

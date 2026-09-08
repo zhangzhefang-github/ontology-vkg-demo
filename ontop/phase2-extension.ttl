@@ -1,0 +1,9 @@
+@prefix : <https://example.org/procurement#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<https://example.org/procurement/phase2-extension> a owl:Ontology .
+
+# This axiom is deliberately absent from ontology.ttl, which Ontop loads.
+# Only the disposable reasoner loads it.
+:DeliverySuspensionEvent rdfs:subClassOf :SupplyDisruptionEvent .

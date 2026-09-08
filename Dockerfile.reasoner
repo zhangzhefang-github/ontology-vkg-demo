@@ -1,0 +1,7 @@
+FROM python:3.12.11-slim-bookworm
+
+COPY requirements-reasoner.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+WORKDIR /app
+ENTRYPOINT ["python", "-m", "reasoner.run"]

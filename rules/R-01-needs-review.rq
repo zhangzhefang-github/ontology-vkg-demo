@@ -1,0 +1,26 @@
+PREFIX : <https://example.org/procurement#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+CONSTRUCT {
+    ?order a :NeedsReviewOrder .
+    ?application a :RuleApplication ;
+        :appliedRule "R-01"^^xsd:string ;
+        :concludedOrder ?order ;
+        :supportingEvent ?event ;
+        :supportingSupplier ?supplier .
+}
+WHERE {
+    ?order a :PurchaseOrder ;
+        :orderStatus ?orderStatus ;
+        :orderedFrom ?supplier .
+    ?event a :SupplyDisruptionEvent ;
+        :affectsSupplier ?supplier ;
+        :isCurrent true .
+    FILTER(STR(?orderStatus) = "PENDING")
+    BIND(IRI(CONCAT(
+        "https://example.org/rule-application/R-01/",
+        ENCODE_FOR_URI(STRAFTER(STR(?order), "https://example.org/purchase-order/")),
+        "/",
+        ENCODE_FOR_URI(STRAFTER(STR(?event), "https://example.org/event/"))
+    )) AS ?application)
+}
