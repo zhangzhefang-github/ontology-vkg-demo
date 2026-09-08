@@ -1,4 +1,4 @@
-# Ontology + Ontop + SPARQL + MySQL 教学演示
+# Ontology + Ontop + SPARQL + MySQL
 
 用一个可运行的采购案例理解虚拟知识图谱（VKG）、本体类型推理和显式业务规则。数据始终保留在 MySQL：Ontop 通过固定 Mapping 把 SPARQL 确定性改写为 SQL；第二阶段再用一次性 RDFLib/owlrl 容器展示本体如何新增父类型事实，以及独立 SPARQL 规则如何据此产生复核结论。
 
