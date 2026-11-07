@@ -90,6 +90,37 @@ bash scripts/demo-phase2.sh
 
 每次运行都会创建新容器和空图，重新获取当前基础事实。它是全量重算，不是增量推理或增量撤回算法。数据库不保存 `NeedsReviewOrder`，因此事件失效后不会残留上次的派生结论。
 
+## 直接调用核心计算
+
+`reasoner.core.compute` 不解析命令行，不接受实验预期，也不打印。它负责从 Ontop 拉取事实、加载本体、执行类型推理与规则，并返回 `ReasoningResult`：
+
+```python
+from pathlib import Path
+from reasoner.core import compute
+
+result = compute(
+    endpoint="http://ontop:8080/sparql",
+    base_query=Path("queries/phase2-base-facts.rq"),
+    ontology=Path("ontop/phase2-extension.ttl"),
+    rule=Path("rules/R-01-needs-review.rq"),
+    without_inheritance=False,
+)
+orders = result.needs_review_orders  # ["101"]
+facts = result.base_facts           # 完整的基础 RDF 图，含命名空间绑定
+summary = result.to_json()          # 现有 RESULT_JSON 的五个字段
+```
+
+以上端点用于 Compose 网络内的推理容器。宿主机调用时使用 `http://localhost:8080/sparql`，并需具备 `requirements-reasoner.txt` 中的依赖；既有演示无需在宿主机安装这些库。
+
+返回结构还保存继承公理是否加载、新增父类型事实、规则绑定和规则文件路径，供 CLI 重放四段输出。基础事实不会加入终端的结果 JSON。CLI 在核心外执行 `--expect` 比对；`--expect one` 缺少 `--expected-order` 时，在拉取事实前以退出码 4 失败。
+
+核心与 CLI 边界测试复用现有推理容器和 Ontop，在 E01 当前有效时运行：
+
+```bash
+docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
+  -B -m unittest discover -s reasoner -p 'test_*.py'
+```
+
 ## 对照实验
 
 ```bash

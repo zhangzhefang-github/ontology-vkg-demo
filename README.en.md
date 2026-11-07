@@ -23,6 +23,8 @@ The normal conclusion is that purchase order 101 needs a supply-risk review. It 
 
 ## Architecture
 
+The reasoning core is also callable from Python and returns structured results. See the [core API example](docs/phase-2-reasoning.md#直接调用核心计算) (Chinese).
+
 ```mermaid
 flowchart LR
     DB[(MySQL<br/>business facts)] -->|JDBC| O[Ontop<br/>Ontology + OBDA Mapping]
