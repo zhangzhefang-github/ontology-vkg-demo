@@ -14,7 +14,13 @@ from pathlib import Path
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF
 
+from reasoner import silence_dependency_warnings
 from reasoner.core import EmptyBaseFacts, InvalidExperiment, compute
+
+
+def setUpModule():
+    # unittest 开跑后会覆盖导入时的过滤，这里重新盖住依赖库告警。
+    silence_dependency_warnings()
 
 
 class CoreIntegrationTests(unittest.TestCase):

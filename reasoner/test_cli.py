@@ -9,6 +9,13 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from reasoner import silence_dependency_warnings
+
+
+def setUpModule():
+    # unittest 开跑后会覆盖导入时的过滤，这里重新盖住依赖库告警。
+    silence_dependency_warnings()
+
 
 class CLITests(unittest.TestCase):
     def run_cli(self, *args):
