@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import TypedDict
 
 from owlrl import DeductiveClosure, OWLRL_Semantics
-from rdflib import Graph, Namespace, URIRef
-from rdflib.namespace import RDF, RDFS
+from rdflib import Graph, Literal, Namespace, URIRef
+from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.term import Node
 
 
 EX = Namespace("https://example.org/procurement#")
@@ -56,13 +57,16 @@ def fetch_base_facts(endpoint: str, query_path: Path) -> Graph:
     return graph
 
 
-def local_id(uri: URIRef, prefix: str) -> str:
+def local_id(uri: Node, prefix: str) -> str:
     value = str(uri)
     return value[len(prefix):] if value.startswith(prefix) else value
 
 
 def event_direct_types(graph: Graph) -> dict[URIRef, set[URIRef]]:
-    events = set(graph.subjects(EX.affectsSupplier, None))
+    events = {
+        event for event in graph.subjects(EX.affectsSupplier, None)
+        if isinstance(event, URIRef)
+    }
     return {
         event: {
             event_type
@@ -131,12 +135,16 @@ def compute(
 ) -> ReasoningResult:
     """Fetch current facts and compute review conclusions without terminal output."""
     base = fetch_base_facts(endpoint, base_query)
+    # Ontop may expose vocabulary types alongside the event table's types.
+    for subject, event_type in list(base.subject_objects(RDF.type)):
+        if str(event_type).startswith((str(RDF), str(RDFS), str(OWL))):
+            base.remove((subject, RDF.type, event_type))
     base.bind("proc", EX)
+    if (None, RDF.type, EX.SupplyDisruptionEvent) in base:
+        raise InvalidExperiment("基础事实已提前包含 SupplyDisruptionEvent，无法进行本体依赖实验")
     direct_types = event_direct_types(base)
     if not any(direct_types.values()):
-        raise EmptyBaseFacts("基础事实包含订单，但没有供应中断事件")
-    if any((event, RDF.type, EX.SupplyDisruptionEvent) in base for event in direct_types):
-        raise InvalidExperiment("基础事实已提前包含 SupplyDisruptionEvent，无法进行本体依赖实验")
+        raise EmptyBaseFacts("基础事实包含订单，但没有具体事件类型")
 
     working = Graph()
     for prefix, namespace in base.namespaces():
@@ -144,10 +152,10 @@ def compute(
     for triple in base:
         working.add(triple)
     ontology_graph = Graph().parse(ontology, format="turtle")
-    if without_inheritance:
-        ontology_graph.remove(EXPECTED_AXIOM)
-    axiom_loaded = EXPECTED_AXIOM in ontology_graph
+    axiom_loaded = not without_inheritance and EXPECTED_AXIOM in ontology_graph
     for triple in ontology_graph:
+        if without_inheritance and triple[1] == RDFS.subClassOf:
+            continue
         working.add(triple)
 
     before_closure = set(working)
@@ -165,6 +173,8 @@ def compute(
     rule_text = rule.read_text(encoding="utf-8")
     rule_result = working.query(rule_text)
     derived = Graph()
+    if rule_result.graph is None:
+        raise ValueError("业务规则必须返回 CONSTRUCT 图")
     for triple in rule_result.graph:
         derived.add(triple)
         working.add(triple)
@@ -176,10 +186,14 @@ def compute(
         order = derived.value(application, EX.concludedOrder)
         event = derived.value(application, EX.supportingEvent)
         supplier = derived.value(application, EX.supportingSupplier)
+        if not isinstance(order, URIRef) or not isinstance(event, URIRef):
+            raise ValueError("规则绑定中的订单和事件必须是 URI")
         direct = sorted(direct_types[event], key=str)
         supplier_name = working.value(supplier, EX.supplierName)
         order_status = working.value(order, EX.orderStatus)
         current = working.value(event, EX.isCurrent)
+        if not isinstance(current, Literal):
+            raise ValueError("事件当前有效状态必须是 Literal")
         evidence: RuleApplication = {
             "rule": str(derived.value(application, EX.appliedRule)),
             "order": local_id(order, ORDER_PREFIX),

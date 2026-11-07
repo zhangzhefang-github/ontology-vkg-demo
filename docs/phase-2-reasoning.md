@@ -36,7 +36,7 @@ bash scripts/migrate-phase2.sh
 - E01 影响的实际供应商；
 - E01 当前是否有效。
 
-基础事实查询位于 [`queries/phase2-base-facts.rq`](../queries/phase2-base-facts.rq)。程序会先检查基础图没有 `E01 rdf:type SupplyDisruptionEvent`，防止 Ontop 提前推导父类型而使对照实验失效。
+基础事实查询位于 [`queries/phase2-base-facts.rq`](../queries/phase2-base-facts.rq)，按事件表记录导出具体事件类型，不设置具体事件类型白名单。核心计算在检查父类之前，只去掉 `rdf:`、`rdfs:`、`owl:` 命名空间中的类型，其余类型保留。基础图一旦包含任何 `rdf:type SupplyDisruptionEvent`，核心计算即失败，CLI 返回退出码 4；查询不会过滤该父类。
 
 ## 本体类型推理
 
@@ -53,7 +53,7 @@ E01 rdf:type DeliverySuspensionEvent      # 基础事实
 E01 rdf:type SupplyDisruptionEvent        # OWL-RL 新增
 ```
 
-移除继承实验只从本次运行的内存本体副本删除该公理。数据库、Ontop Mapping、基础事实查询和业务规则保持不变。
+移除继承模式不把扩展中的任何 `rdfs:subClassOf` 公理装入推理图。基础事实中的父类仍会导致计算失败，不能通过删除这些事实模拟移除继承。数据库、Ontop Mapping、基础事实查询和业务规则保持不变。
 
 ## R-01 业务规则
 

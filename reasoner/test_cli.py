@@ -60,6 +60,20 @@ class CLITests(unittest.TestCase):
             self.assertEqual(completed.returncode, 5, completed.stderr)
             self.assertIn("REASONER_ERROR:", completed.stderr)
 
+    def test_premature_parent_is_exit_four_in_both_inheritance_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            query = Path(directory) / "parent.rq"
+            query.write_text("""
+                PREFIX : <https://example.org/procurement#>
+                CONSTRUCT { ?event a :SupplyDisruptionEvent }
+                WHERE { ?event :affectsSupplier ?supplier }
+            """, encoding="utf-8")
+            for args in ((), ("--without-inheritance",)):
+                with self.subTest(args=args):
+                    completed = self.run_cli("--base-query", str(query), *args)
+                    self.assertEqual(completed.returncode, 4, completed.stderr)
+                    self.assertIn("EXPERIMENT_FAILURE:", completed.stderr)
+
     def test_missing_expected_order_fails_before_querying_ontop(self):
         requests = []
 

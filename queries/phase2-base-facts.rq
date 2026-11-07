@@ -21,5 +21,4 @@ WHERE {
         :isCurrent ?isCurrent ;
         a ?directEventType .
     ?affectedSupplier :supplierName ?affectedSupplierName .
-    FILTER(?directEventType = :DeliverySuspensionEvent)
 }
