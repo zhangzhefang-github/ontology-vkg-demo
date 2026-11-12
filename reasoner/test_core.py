@@ -11,16 +11,34 @@ import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from rdflib import Graph, URIRef
+from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
 from reasoner import silence_dependency_warnings
-from reasoner.core import EmptyBaseFacts, InvalidExperiment, compute
+from reasoner.core import EmptyBaseFacts, InvalidExperiment, compute, event_direct_types
 
 
 def setUpModule():
     # unittest 开跑后会覆盖导入时的过滤，这里重新盖住依赖库告警。
     silence_dependency_warnings()
+
+
+class CoreUnitTests(unittest.TestCase):
+    def test_event_direct_types_ignores_non_uri_events_and_types(self):
+        graph = Graph()
+        event = URIRef("https://example.org/event/E01")
+        anonymous_event = BNode()
+        supplier = URIRef("https://example.org/supplier/S01")
+        affects_supplier = URIRef("https://example.org/procurement#affectsSupplier")
+        event_type = URIRef("https://example.org/procurement#DeliverySuspensionEvent")
+        graph.add((event, affects_supplier, supplier))
+        graph.add((event, RDF.type, event_type))
+        graph.add((event, RDF.type, Literal("DeliverySuspensionEvent")))
+        graph.add((event, RDF.type, BNode()))
+        graph.add((anonymous_event, affects_supplier, supplier))
+        graph.add((anonymous_event, RDF.type, event_type))
+
+        self.assertEqual(event_direct_types(graph), {event: {event_type}})
 
 
 class CoreIntegrationTests(unittest.TestCase):

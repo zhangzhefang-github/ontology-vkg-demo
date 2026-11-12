@@ -1,5 +1,7 @@
 """CLI boundary checks, including proof of zero HTTP requests on invalid input."""
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -8,6 +10,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from reasoner import silence_dependency_warnings
 
@@ -23,6 +26,20 @@ class CLITests(unittest.TestCase):
             [sys.executable, "-B", "-m", "reasoner.run", *args],
             capture_output=True, text=True, timeout=30,
         )
+
+    def test_invalid_expect_choice_fails_before_computing(self):
+        from reasoner.run import main
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["reasoner.run", "--expect", "many"]), \
+                patch("reasoner.run.compute") as compute, \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                main()
+        self.assertEqual(raised.exception.code, 2)
+        compute.assert_not_called()
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("argument --expect: invalid choice: 'many'", stderr.getvalue())
 
     def test_normal_cli_preserves_json_schema(self):
         completed = self.run_cli("--expect", "one", "--expected-order", "101")
