@@ -41,6 +41,19 @@ class CLITests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("argument --expect: invalid choice: 'many'", stderr.getvalue())
 
+    def test_unexpected_compute_error_is_reported_without_stdout(self):
+        from reasoner.run import main
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["reasoner.run"]), \
+                patch("reasoner.run.compute", side_effect=RuntimeError("reasoning failed")) as compute, \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = main()
+        self.assertEqual(exit_code, 5)
+        compute.assert_called_once()
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "REASONER_ERROR: RuntimeError: reasoning failed\n")
+
     def test_normal_cli_preserves_json_schema(self):
         completed = self.run_cli("--expect", "one", "--expected-order", "101")
         self.assertEqual(completed.returncode, 0, completed.stderr)
