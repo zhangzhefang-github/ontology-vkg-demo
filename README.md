@@ -88,6 +88,15 @@ bash scripts/test-phase2.sh
 Phase 2 ALL PASS
 ```
 
+核心计算与 CLI 边界测试（MySQL、Ontop 健康且 E01 当前有效）：
+
+```bash
+docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
+  -B -m unittest discover -s reasoner -p 'test_*.py'
+```
+
+测试覆盖结构化结果、类型与继承公理、规则形式及 CLI 错误处理，详见[测试覆盖与独立运行命令](docs/validation.md#核心与-cli-边界测试)。
+
 ## 架构边界
 
 本项目准确的实现方式是 **OWL-RL 本体推理 + 显式 SPARQL 规则执行**，没有部署 Datalog 引擎，也没有接入大模型、向量数据库、图数据库或复杂规则平台。

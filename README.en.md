@@ -88,6 +88,15 @@ The suite verifies normal reasoning, removal of the subclass axiom, event deacti
 Phase 2 ALL PASS
 ```
 
+Core computation and CLI boundary tests (requires healthy MySQL and Ontop services and an active E01):
+
+```bash
+docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
+  -B -m unittest discover -s reasoner -p 'test_*.py'
+```
+
+The tests cover structured results, types and subclass axioms, rule query form, and CLI error handling. See the [coverage matrix and standalone test command](docs/validation.md#核心与-cli-边界测试) (Chinese).
+
 ## Scope and trade-offs
 
 The exact implementation is **OWL-RL ontology reasoning followed by an explicit SPARQL rule**. It is not a Datalog deployment and does not use an LLM, vector database, graph database, or general-purpose rule platform.
