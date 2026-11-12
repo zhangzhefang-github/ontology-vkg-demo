@@ -10,6 +10,7 @@ import unittest
 import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF
@@ -24,6 +25,22 @@ def setUpModule():
 
 
 class CoreUnitTests(unittest.TestCase):
+    def test_compute_rejects_select_rule_instead_of_construct(self):
+        facts = Graph().parse(data="""
+            @prefix : <https://example.org/procurement#> .
+            :event a :DeliverySuspensionEvent ; :affectsSupplier :supplier .
+        """, format="turtle")
+
+        with patch("reasoner.core.fetch_base_facts", return_value=facts), \
+                patch.object(Path, "read_text", return_value="SELECT ?s WHERE { ?s ?p ?o }"):
+            with self.assertRaisesRegex(ValueError, "业务规则必须返回 CONSTRUCT 图"):
+                compute(
+                    endpoint="http://unused.invalid/sparql",
+                    base_query=Path("queries/phase2-base-facts.rq"),
+                    ontology=Path("ontop/phase2-extension.ttl"),
+                    rule=Path("rules/R-01-needs-review.rq"),
+                )
+
     def test_event_direct_types_ignores_non_uri_events_and_types(self):
         graph = Graph()
         event = URIRef("https://example.org/event/E01")
