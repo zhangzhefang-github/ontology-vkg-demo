@@ -134,7 +134,28 @@ def compute(
     without_inheritance: bool = False,
 ) -> ReasoningResult:
     """Fetch current facts and compute review conclusions without terminal output."""
+    # 在线路径仍先读取当前事实，再进入与离线重放相同的推理计算。
     base = fetch_base_facts(endpoint, base_query)
+    return compute_from_facts(
+        base_facts=base, ontology=ontology, rule=rule,
+        without_inheritance=without_inheritance,
+    )
+
+
+def compute_from_facts(
+    *,
+    base_facts: Graph,
+    ontology: Path,
+    rule: Path,
+    without_inheritance: bool = False,
+) -> ReasoningResult:
+    """Run the same computation over supplied facts without contacting Ontop."""
+    # 复制输入图，避免闭包改写调用方保存的事实快照。
+    base = Graph()
+    for prefix, namespace in base_facts.namespaces():
+        base.bind(prefix, namespace)
+    for triple in base_facts:
+        base.add(triple)
     # Ontop may expose vocabulary types alongside the event table's types.
     for subject, event_type in list(base.subject_objects(RDF.type)):
         if str(event_type).startswith((str(RDF), str(RDFS), str(OWL))):

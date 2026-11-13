@@ -28,6 +28,13 @@ def precondition_hash(bound_facts, fingerprint):
     return digest(canonical_json({'bound_facts': bound_facts, 'semantic_fingerprint': fingerprint}).encode())
 
 
+def loaded_core_bytes():
+    content = Path(core.__file__).read_bytes()
+    if content != _LOADED_CORE_BYTES:
+        raise InvalidEvidence('推理核心在加载后发生变化，必须重启进程')
+    return content
+
+
 def semantic_material(settings):
     paths = {
         'mapping': settings.mapping,
@@ -38,8 +45,7 @@ def semantic_material(settings):
         'core': Path(core.__file__),
     }
     content = {name: path.read_bytes() for name, path in paths.items()}
-    if content['core'] != _LOADED_CORE_BYTES:
-        raise InvalidEvidence('推理核心在加载后发生变化，必须重启进程')
+    loaded_core_bytes()
     fingerprint = {name: digest(value) for name, value in content.items()}
     fingerprint.update({name: importlib.metadata.version(name) for name in ('rdflib', 'owlrl')})
     return content, fingerprint

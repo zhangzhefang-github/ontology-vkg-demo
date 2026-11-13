@@ -79,6 +79,54 @@ docker compose -f compose.decision.yml run --rm -T --entrypoint python decision 
 
 证据包含完整基础事实图的排序 N-Triples、快照 SHA-256、规则应用、绑定业务事实、业务前提哈希、语义版本指纹、完整代码提交和两份本体及规则原文。空白节点、核心与代码提交不符、核心加载后改变或计算期间输入变更都拒绝创建；基础事实提前包含父类仍作为技术失败。事实哈希只用于完整性，不参与业务失效判断。
 
+## 离线重放
+
+审计查阅者用已保存的事实快照、两份本体原文和 R-01 原文复核该决策记录的规则应用。重放只比较是否再次得到相同的规则、订单和事件绑定。它不读取当前业务事实，不写业务表或决策表，也不需要审批结论或任务已经存在。Agent 说明标为不是证据，不参与计算。重放成功不能说明 Ontop 当时加载了保存的 Mapping；事实哈希只核对快照文本有没有被改。
+
+恢复执行环境时使用证据里的 `code_commit`，以及 `semantic_fingerprint` 中的 `rdflib` 和 `owlrl` 版本。代码、依赖或保存原文与记录不一致时，命令以退出码 1 失败，并写明重放前提未满足。不要改用当前规则、当前本体或在线事实继续计算。
+
+```bash
+git checkout "$CODE_COMMIT"
+python -m venv .venv
+.venv/bin/pip install "rdflib==$RDFLIB_VERSION" "owlrl==$OWLRL_VERSION"
+export DECISION_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+.venv/bin/python -m decision.replay decision.json
+```
+
+`CODE_COMMIT`、`RDFLIB_VERSION` 和 `OWLRL_VERSION` 取自该决策 JSON 的证据字段，不要取自当前工作区的依赖。`decision.json` 可以是提交建议返回的整条决策，也可以只是其中的 `evidence` 对象。成功时标准输出是一条 JSON，包含 `matched`、`rule_application` 和 `code_commit`；标准错误为空，退出码为 0。快照文本与 `facts_hash` 不一致，或计算结果里没有记录的那条绑定时，退出码为 1。
+
+容器中的依赖由决策镜像按锁定版本安装。先用独立项目名启动 MySQL 和 Ontop，提交一条建议并把 JSON 存到宿主机，再停止 Ontop，用 `--no-deps` 离线重放。下面的项目名必须与已经在跑的决策环境区分开：
+
+```bash
+export DECISION_PROJECT=ontology-vkg-decision-replay
+export CODE_COMMIT="$(git rev-parse HEAD)"
+export DECISION_GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+docker compose -f compose.decision.yml up -d --build --wait mysql ontop
+docker compose -f compose.decision.yml build decision
+SNAPSHOT=/tmp/ontology-vkg-replay-input.json
+docker compose -f compose.decision.yml run --rm -T --entrypoint python decision \
+  -c 'import json; from decision.service import DecisionService; print(json.dumps(DecisionService().submit("101", "E01", "说明不是证据"), ensure_ascii=False))' \
+  > "$SNAPSHOT"
+docker compose -f compose.decision.yml stop ontop
+docker compose -f compose.decision.yml run --no-deps --rm -T \
+  -v "$SNAPSHOT:/tmp/replay-input.json:ro" \
+  --entrypoint python decision -m decision.replay /tmp/replay-input.json
+```
+
+停止 Ontop 之后，上述重放仍应打印订单 101、事件 E01、规则 R-01。把快照文件里的事实文本改掉一个字符后再执行同一命令，应因完整性哈希失败而退出。把证据中的订单或事件改成未计算出来的值，应因未得到同一条规则应用而退出。这条命令不会重新连接 Ontop。确认结束后只清理本项目：
+
+```bash
+docker compose -f compose.decision.yml down --volumes --remove-orphans
+```
+
+只跑离线重放的模块测试时不需要启动容器。需要用真实 MySQL 和 Ontop 产生证据、再在断开推理端点的设置下重放时，在决策容器中设置 `REPLAY_LIVE=1`：
+
+```bash
+docker compose -f compose.decision.yml run --rm -T \
+  -e REPLAY_LIVE=1 -e TEST_DB_PASSWORD=demo_root_password --entrypoint python decision \
+  -B -m unittest decision.test_replay
+```
+
 MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。
 
 完整新模块验收包含真实并发提交、参数忽略、过时规则、版本核验、哈希排除项、空白节点、计算期间文件变化和权限探针：
