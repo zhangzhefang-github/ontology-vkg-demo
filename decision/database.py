@@ -68,13 +68,7 @@ def decision_by_id(connection, decision_id, *, lock=False):
     return decision_response(row, approval_for(connection, decision_id))
 
 
-def task_for(connection, decision_id):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            'SELECT * FROM procurement.supply_risk_review_task WHERE source_decision_id=%s',
-            (decision_id,),
-        )
-        row = cursor.fetchone()
+def task_view(row):
     if row is None:
         return None
     return {
@@ -82,6 +76,24 @@ def task_for(connection, decision_id):
         'order': str(row['order_id']), 'event': row['event_id'], 'assigned_role': row['assigned_role'],
         'description': row['description'], 'created_at': row['created_at'].isoformat(),
     }
+
+
+def task_for(connection, decision_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT * FROM procurement.supply_risk_review_task WHERE source_decision_id=%s',
+            (decision_id,),
+        )
+        return task_view(cursor.fetchone())
+
+
+def task_by_id(connection, task_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT * FROM procurement.supply_risk_review_task WHERE id=%s',
+            (task_id,),
+        )
+        return task_view(cursor.fetchone())
 
 
 def attempts_for(connection, decision_id):
