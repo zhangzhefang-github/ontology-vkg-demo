@@ -136,3 +136,7 @@ ontology-vkg-demo/
 使用问题或改进建议请提交 [GitHub Issue](https://github.com/zhangzhefang-github/ontology-vkg-demo/issues)。提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请遵循 [SECURITY.md](SECURITY.md)，不要在公开 Issue 中披露敏感信息。
 
 本项目采用 [MIT License](LICENSE)。
+
+## 供应风险复核决策闭环
+
+独立的 MCP 查询入口及容器验收见[决策闭环说明](docs/decision-loop.md)。查询复用 R-01，只表示需要供应风险复核，不改变订单。

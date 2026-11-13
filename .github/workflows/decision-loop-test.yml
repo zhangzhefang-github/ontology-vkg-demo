@@ -1,0 +1,37 @@
+name: Supply review decision loop
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  decision-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DECISION_PROJECT: vkg-decision-ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate isolated Compose configuration
+        run: docker compose -f compose.decision.yml config --quiet
+      - name: Start isolated MySQL and Ontop
+        run: docker compose -f compose.decision.yml up -d --build --wait mysql ontop
+      - name: Build decision image with locked dependencies
+        run: docker compose -f compose.decision.yml build decision
+      - name: Verify decision operations
+        run: >-
+          docker compose -f compose.decision.yml run --rm -T
+          -e TEST_DB_PASSWORD=demo_root_password --entrypoint python decision
+          -B -m unittest discover -s decision -p 'test_*.py'
+      - name: Verify stdio transport
+        run: >-
+          docker compose -f compose.decision.yml run --rm -T --entrypoint python decision
+          scripts/smoke-decision-mcp.py
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f compose.decision.yml logs mysql ontop
+      - name: Clean isolated environment
+        if: always()
+        run: docker compose -f compose.decision.yml down --volumes --remove-orphans
