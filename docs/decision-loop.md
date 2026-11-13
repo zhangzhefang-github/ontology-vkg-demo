@@ -79,6 +79,34 @@ docker compose -f compose.decision.yml run --rm -T --entrypoint python decision 
 
 证据包含完整基础事实图的排序 N-Triples、快照 SHA-256、规则应用、绑定业务事实、业务前提哈希、语义版本指纹、完整代码提交和两份本体及规则原文。空白节点、核心与代码提交不符、核心加载后改变或计算期间输入变更都拒绝创建；基础事实提前包含父类仍作为技术失败。事实哈希只用于完整性，不参与业务失效判断。
 
+## 查看与拒绝
+
+采购主管用个人令牌查看证据并拒绝。展示、批准和拒绝共用同一身份校验：令牌哈希匹配，且用户是启用的采购主管。库内只有哈希，比较采用恒定时间；明文演示值只在 `decision/test_config.py`，不作为数据库列，也不进入应用或数据库日志。Agent 说明在结果里标为不是证据。
+
+拒绝必须有非空理由，不先做失效复核。审批记录保存拒绝人、当时角色、理由和数据库服务器时间，写入后应用账号不能改，每条决策至多一条。拒绝后的决策保持已拒绝并继续占位，不能撤回或重开；同一订单和事件的后续建议返回这条记录。对已有终态再次批准或拒绝只返回原结论，不新增审批，也不触发执行。待审批记录的完整批准事务不在这一步。
+
+命令行进程使用审批通道账号 `decision_manager`。该账号只能读取用户与决策、插入审批记录，并更新决策的审批状态列；不能改证据列，不能删除，也不能写供应商、订单和事件。MCP 进程仍只使用 `decision_agent`，工具仍只有查询和提交建议。下面的命令沿用本节前面的项目名、代码提交和 Git 目录。令牌从测试配置读入，避免出现在命令参数里。
+
+```bash
+docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_manager \
+  -e DECISION_DB_PASSWORD=demo_manager_db_password \
+  --entrypoint python decision -B -c '
+from dataclasses import replace
+from decision.cli import main
+from decision.service import DecisionService, Settings
+from decision.test_config import SUPERVISOR_TOKEN
+agent = DecisionService(replace(Settings.from_env(), db_user="decision_agent", db_password="demo_agent_db_password"))
+created = agent.submit("101", "E01", "请主管查看证据；这段说明不是证据")
+decision_id = str(created["id"])
+main(["show", "--id", decision_id, "--token", SUPERVISOR_TOKEN])
+main(["reject", "--id", decision_id, "--token", SUPERVISOR_TOKEN, "--reason", "证据不足以采纳"])
+main(["approve", "--id", decision_id, "--token", SUPERVISOR_TOKEN, "--comment", "不能改成批准"])
+'
+```
+
+单独查看或拒绝时，把上面的 `decision_id` 换成已有编号，并只调用对应子命令：`python -m decision.cli show --id <编号> --token <令牌>` 或 `python -m decision.cli reject --id <编号> --token <令牌> --reason <理由>`。容器里的数据库账号必须是 `decision_manager`。
+
 MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。
 
 完整新模块验收包含真实并发提交、参数忽略、过时规则、版本核验、哈希排除项、空白节点、计算期间文件变化和权限探针：
