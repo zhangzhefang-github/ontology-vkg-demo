@@ -139,6 +139,12 @@ class DecisionService:
         finally:
             connection.close()
 
+    def replay(self, evidence: dict) -> dict:
+        """用已保存证据离线重放规则应用，不读取也不写入决策。"""
+        from decision.replay import replay_evidence
+        with _REASONING_LOCK:
+            return replay_evidence(evidence, self.settings)
+
     def show(self, decision_id: int, token: str | None = None) -> DecisionResponse:
         connection = connect(self.settings)
         try:
