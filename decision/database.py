@@ -13,7 +13,7 @@ def connect(settings):
     )
 
 
-def decision_response(row):
+def decision_response(row, approval=None):
     if row is None:
         return None
     return {
@@ -23,6 +23,7 @@ def decision_response(row):
         'action': 'create_supply_risk_review_task', 'assigned_role': '采购员',
         'description': row['description'], 'evidence': json.loads(row['evidence']),
         'agent_note': {'text': row['agent_note'], 'is_evidence': False},
+        'approval': approval,
     }
 
 
@@ -32,4 +33,27 @@ def occupied(connection, order, event):
             'SELECT * FROM decision_record WHERE order_id=%s AND event_id=%s AND occupancy=1',
             (order, event),
         )
-        return decision_response(cursor.fetchone())
+        row = cursor.fetchone()
+        return decision_response(row, approval_for(connection, row['id'])) if row else None
+
+
+def approval_for(connection, decision_id):
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT * FROM approval_record WHERE decision_id=%s', (decision_id,))
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        'id': row['id'], 'decision_id': row['decision_id'], 'conclusion': row['conclusion'],
+        'actor_id': row['actor_id'], 'actor_name': row['actor_name'], 'actor_role': row['actor_role'],
+        'reason': row['comment'], 'created_at': row['created_at'].isoformat(),
+    }
+
+
+def decision_by_id(connection, decision_id, *, lock=False):
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT * FROM decision_record WHERE id=%s' + (' FOR UPDATE' if lock else ''), (decision_id,))
+        row = cursor.fetchone()
+    if row is None:
+        raise LookupError('决策记录不存在')
+    return decision_response(row, approval_for(connection, decision_id))

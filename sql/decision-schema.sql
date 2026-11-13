@@ -18,3 +18,35 @@ CREATE USER 'decision_agent'@'%' IDENTIFIED BY 'demo_agent_db_password';
 GRANT SELECT ON decision_loop.decision_record TO 'decision_agent'@'%';
 GRANT INSERT (order_id,event_id,evidence,agent_note,description)
     ON decision_loop.decision_record TO 'decision_agent'@'%';
+
+-- Personal review identity and append-only conclusions.
+CREATE TABLE decision_loop.app_user (
+    id BIGINT NOT NULL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(40) NOT NULL,
+    enabled BOOLEAN NOT NULL,
+    token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE
+) ENGINE=InnoDB;
+CREATE TABLE decision_loop.approval_record (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    decision_id BIGINT NOT NULL UNIQUE,
+    conclusion VARCHAR(20) NOT NULL,
+    actor_id BIGINT NOT NULL,
+    actor_name VARCHAR(100) NOT NULL,
+    actor_role VARCHAR(40) NOT NULL,
+    comment TEXT NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    FOREIGN KEY (decision_id) REFERENCES decision_loop.decision_record(id),
+    FOREIGN KEY (actor_id) REFERENCES decision_loop.app_user(id),
+    CHECK (conclusion IN ('APPROVE','REJECT'))
+) ENGINE=InnoDB;
+INSERT INTO decision_loop.app_user VALUES (1,'演示采购主管','采购主管',1,'f323680f35f7c1b6104f518b7333e4bbfd3aec262c705323ab43c9d73fe212cc');
+INSERT INTO decision_loop.app_user VALUES (2,'演示采购员','采购员',1,'5cfdfbeb64fbc8d045f7359fbe0fdc63c6cf11316fe7ff49c32926ce7b63cbda');
+INSERT INTO decision_loop.app_user VALUES (3,'停用用户','采购主管',0,'36a9248967281295510370ba6c018f4e6de8fe1a46fa5f558013f96af8536b54');
+
+CREATE USER 'decision_manager'@'%' IDENTIFIED BY 'demo_manager_db_password';
+GRANT SELECT ON decision_loop.decision_record TO 'decision_manager'@'%';
+GRANT UPDATE (approval_status) ON decision_loop.decision_record TO 'decision_manager'@'%';
+GRANT SELECT ON decision_loop.app_user TO 'decision_manager'@'%';
+GRANT SELECT,INSERT ON decision_loop.approval_record TO 'decision_manager'@'%';
+GRANT SELECT ON decision_loop.approval_record TO 'decision_agent'@'%';
