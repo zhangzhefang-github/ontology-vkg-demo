@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from dataclasses import dataclass
@@ -8,7 +9,8 @@ from typing import TypedDict
 
 import pymysql
 
-from decision.database import connect, occupied, decision_response
+from decision.database import connect, occupied, decision_response, decision_by_id
+from decision.auth import supervisor
 from decision.evidence import (InvalidEvidence, canonical_json, semantic_material, verify_code, capture)
 
 from reasoner.core import ResultJSON, RuleApplication, compute
@@ -16,6 +18,7 @@ from reasoner.core import ResultJSON, RuleApplication, compute
 
 # RDFLib/pyparsing share parser state; concurrent tools must serialize reasoning.
 _REASONING_LOCK = threading.RLock()
+logger = logging.getLogger(__name__)
 
 
 class DecisionResponse(TypedDict):
@@ -31,6 +34,7 @@ class DecisionResponse(TypedDict):
     description: str
     evidence: dict
     agent_note: dict
+    approval: dict | None
 
 
 class QueryRuleApplication(RuleApplication):
@@ -132,5 +136,57 @@ class DecisionService:
             if winner is None:
                 raise InvalidEvidence('占位在并发提交期间已释放，请重新提交')
             return winner
+        finally:
+            connection.close()
+
+    def show(self, decision_id: int, token: str | None = None) -> DecisionResponse:
+        connection = connect(self.settings)
+        try:
+            supervisor(connection, token)
+            return decision_by_id(connection, decision_id)
+        finally:
+            connection.close()
+
+    def approve(self, decision_id: int, token: str | None = None, comment: str = '') -> DecisionResponse:
+        """与拒绝共用终态入口；待审批的批准事务不在本票，也不触发执行。"""
+        return self._review(decision_id, token, 'APPROVE', comment)
+
+    def reject(self, decision_id: int, token: str | None, reason: str) -> DecisionResponse:
+        """锁定后拒绝仍待审批的决策，并留下不可改的审批记录。"""
+        return self._review(decision_id, token, 'REJECT', reason)
+
+    def _review(self, decision_id: int, token: str | None, conclusion: str, reason: str) -> DecisionResponse:
+        connection = connect(self.settings)
+        try:
+            actor = supervisor(connection, token)
+            # 身份查询不能占住可重复读快照，否则并发拒绝看不到刚提交的审批记录。
+            connection.rollback()
+            if conclusion == 'REJECT' and (not isinstance(reason, str) or not reason.strip()):
+                raise ValueError('拒绝必须填写理由')
+            try:
+                current = decision_by_id(connection, decision_id, lock=True)
+                if current['approval_status'] != 'PENDING':
+                    connection.rollback()
+                    return decision_by_id(connection, decision_id)
+                if conclusion != 'REJECT':
+                    connection.rollback()
+                    raise NotImplementedError('批准事务不在本票范围')
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'INSERT INTO approval_record '
+                        '(decision_id,conclusion,actor_id,actor_name,actor_role,comment) '
+                        'VALUES (%s,%s,%s,%s,%s,%s)',
+                        (decision_id, conclusion, actor['id'], actor['name'], actor['role'], reason),
+                    )
+                    cursor.execute(
+                        "UPDATE decision_record SET approval_status='REJECTED' WHERE id=%s",
+                        (decision_id,),
+                    )
+                connection.commit()
+                logger.info('决策 %s 已拒绝，未记录令牌', decision_id)
+                return decision_by_id(connection, decision_id)
+            except Exception:
+                connection.rollback()
+                raise
         finally:
             connection.close()

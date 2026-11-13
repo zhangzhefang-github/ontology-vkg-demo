@@ -66,6 +66,7 @@ class ProposalTests(unittest.TestCase):
         self.admin = pymysql.connect(host='mysql', user='root',
                                      password=os.environ['TEST_DB_PASSWORD'], autocommit=True)
         with self.admin.cursor() as cursor:
+            cursor.execute('DELETE FROM decision_loop.approval_record')
             cursor.execute('DELETE FROM decision_loop.decision_record')
         self.service = DecisionService(Settings.from_env())
 
