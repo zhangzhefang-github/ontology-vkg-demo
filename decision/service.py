@@ -424,6 +424,12 @@ class DecisionService:
         self._require_executable(current)
         order_row, event_row = self._lock_bound(connection, current)
         judgement = judge(current['evidence'], check, order_row, event_row)
+        # 缺行时 judge 仍返回 business。检查没做完不能记成执行被阻止，须与批准事务一样失效并释放占位。
+        if judgement.kind == 'business' and not check.completed:
+            self._invalidate(connection, decision_id, judgement.reason)
+            connection.commit()
+            logger.info('决策 %s 因绑定行已不存在而失效', decision_id)
+            return attach_execution(connection, decision_by_id(connection, decision_id))
         if judgement.kind == 'business':
             return self._record_outcome(
                 connection, decision_id, 'BLOCKED', judgement.reason, judgement.mismatches, check, None,
