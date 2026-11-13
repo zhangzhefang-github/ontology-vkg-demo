@@ -315,8 +315,12 @@ class DecisionService:
         finally:
             connection.close()
 
-    def execute(self, decision_id: int) -> DecisionResponse:
-        """只接收决策编号。成功和被阻止是终态；执行失败可完整复核后重试。"""
+    def execute(self, decision_id: int, **ignored_action_parameters) -> DecisionResponse:
+        """只接收决策编号。动作、订单、事件、角色、描述和新证据一律忽略，也不再次批准。
+
+        成功和被阻止是终态；执行失败可完整复核后重试。
+        """
+        del ignored_action_parameters
         connection = connect(self.settings)
         try:
             current = decision_by_id(connection, decision_id)

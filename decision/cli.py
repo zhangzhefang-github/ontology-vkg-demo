@@ -30,7 +30,10 @@ def main(argv=None) -> int:
     trace = commands.add_parser('trace', help='按供应风险复核任务编号只读追溯，不修改数据')
     trace.add_argument('--task-id', type=int, required=True)
 
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    # 执行命令只认决策编号；动作、订单、事件、角色、描述或新证据即使传入也忽略。
+    if args.command != 'execute' and unknown:
+        parser.error('unrecognized arguments: ' + ' '.join(unknown))
     service = DecisionService()
     if args.command == 'show':
         result = service.show(args.id, args.token)
