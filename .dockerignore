@@ -2,3 +2,5 @@
 !Dockerfile
 !Dockerfile.reasoner
 !requirements-reasoner.txt
+!Dockerfile.decision
+!requirements-decision.txt
