@@ -9,7 +9,7 @@ from typing import TypedDict
 
 import pymysql
 
-from decision.database import connect, occupied, decision_response, decision_by_id, attach_execution
+from decision.database import connect, occupied, decision_response, decision_by_id, attach_execution, task_by_id
 from decision.auth import supervisor
 from decision.evidence import (
     InvalidEvidence, bound_facts, canonical_json, semantic_material, verify_code, capture,
@@ -160,6 +160,64 @@ class DecisionService:
         from decision.replay import replay_evidence
         with _REASONING_LOCK:
             return replay_evidence(evidence, self.settings)
+
+    def trace(self, task_id: int) -> dict:
+        """按供应风险复核任务编号只读追溯，不批准、不执行、不改任何数据。"""
+        connection = connect(self.settings)
+        try:
+            task = task_by_id(connection, task_id)
+            if task is None:
+                logger.info('任务 %s 未找到，未修改数据', task_id)
+                return {'found': False, 'task_id': task_id, 'message': '未找到供应风险复核任务'}
+            decision = attach_execution(connection, decision_by_id(connection, task['source_decision_id']))
+            connection.rollback()
+            evidence = decision['evidence']
+            logger.info('已按任务 %s 追溯来源决策 %s，未修改数据', task_id, decision['id'])
+            return {
+                'found': True,
+                'task': task,
+                'decision': {
+                    'id': decision['id'],
+                    'order': decision['order'],
+                    'event': decision['event'],
+                    'approval_status': decision['approval_status'],
+                    'execution_status': decision['execution_status'],
+                    'created_at': decision['created_at'],
+                    'description': decision['description'],
+                    'assigned_role': decision['assigned_role'],
+                },
+                'fact_snapshot': {
+                    'use': '发现快照是否被改写，不参与业务失效判断',
+                    'facts_nt': evidence['facts_nt'],
+                    'facts_hash': evidence['facts_hash'],
+                },
+                'business_precondition': {
+                    'use': '判断绑定事实和语义版本是否变化',
+                    'bound_facts': evidence['bound_facts'],
+                    'precondition_hash': evidence['precondition_hash'],
+                    'semantic_fingerprint': evidence['semantic_fingerprint'],
+                },
+                'rule_application': {
+                    'rule': evidence['application']['rule'],
+                    'order': evidence['application']['order'],
+                    'event': evidence['application']['event'],
+                    'record': '绑定',
+                    'description': '规则应用记录的是绑定，不是通用 OWL 证明。',
+                },
+                'reasoning_version': {
+                    'use': '供检出代码提交并离线重放当时的规则应用',
+                    'code_commit': evidence['code_commit'],
+                    'semantic_fingerprint': evidence['semantic_fingerprint'],
+                    'ontop_ontology_text': evidence['ontop_ontology_text'],
+                    'ontology_text': evidence['ontology_text'],
+                    'rule_text': evidence['rule_text'],
+                },
+                'approval': decision['approval'],
+                'agent_note': decision['agent_note'],
+                'attempts': decision['attempts'],
+            }
+        finally:
+            connection.close()
 
     def show(self, decision_id: int, token: str | None = None) -> DecisionResponse:
         connection = connect(self.settings)

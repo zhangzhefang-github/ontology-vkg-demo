@@ -94,3 +94,10 @@ GRANT SELECT, INSERT ON decision_loop.execution_attempt TO 'decision_manager'@'%
 GRANT SELECT ON procurement.purchase_order TO 'decision_manager'@'%';
 GRANT SELECT ON procurement.supply_disruption_event TO 'decision_manager'@'%';
 GRANT SELECT, INSERT ON procurement.supply_risk_review_task TO 'decision_manager'@'%';
+
+-- 追溯只读账号，不对应新的业务角色，不能插入、更新或删除。
+CREATE USER 'decision_reader'@'%' IDENTIFIED BY 'demo_reader_db_password';
+GRANT SELECT ON decision_loop.decision_record TO 'decision_reader'@'%';
+GRANT SELECT ON decision_loop.approval_record TO 'decision_reader'@'%';
+GRANT SELECT ON decision_loop.execution_attempt TO 'decision_reader'@'%';
+GRANT SELECT ON procurement.supply_risk_review_task TO 'decision_reader'@'%';

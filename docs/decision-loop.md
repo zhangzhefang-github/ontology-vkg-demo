@@ -182,6 +182,67 @@ main(["execute", "--id", decision_id])
 
 上面的第二次 `execute` 返回已经创建的任务，不再写库。审批执行账号是 `decision_manager`：只能插入审批记录、执行尝试和任务，并更新决策状态、占位和失效原因；不能改证据，不能删除，也不能写供应商、订单和事件。MCP 仍然只暴露查询和提交建议。
 
+## 按任务编号追溯
+
+审计查阅不另设业务角色，也不要求个人令牌。能运行本容器即可按供应风险复核任务编号查询。命令行 `trace` 只调用决策模块的只读操作 `DecisionService.trace`，不批准、不执行、不重试，也不修改任务、决策、证据、审批或执行尝试。已有的失败尝试和后来的成功尝试会一并返回。无效任务编号返回 `found` 为 false，以及“未找到供应风险复核任务”。MCP 不注册追溯工具。
+
+追溯结果把完整事实快照和业务前提分开：事实快照（按行排序的 N-Triples 和事实哈希）只用来发现快照是否被改写，不参与业务失效判断；业务前提（绑定事实、语义版本指纹和业务前提哈希）用来判断绑定是否变化。规则应用单独标为绑定记录，不是通用 OWL 证明。推理版本材料保存两份本体、规则原文、语义版本指纹和代码提交，供离线重放。审批结论和标明不是证据的 Agent 说明各自独立，说明不进入事实哈希。
+
+容器使用只读账号 `decision_reader`。它只能查询决策记录、审批记录、执行尝试和供应风险复核任务，不能插入、更新或删除。下面的命令沿用本节前面的项目名、代码提交和 Git 目录。第一段用 Agent 通道提交建议，并用审批账号批准以产生任务，只打印任务编号。第二段只用只读账号调用 `trace`。第三段查询一个不存在的编号，应打印未找到并返回退出码 1。追溯本身不调用执行或重试命令。
+
+```bash
+TASK_ID=$(docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_manager \
+  -e DECISION_DB_PASSWORD=demo_manager_db_password \
+  --entrypoint python decision -B -c '
+from dataclasses import replace
+from decision.service import DecisionService, Settings
+from decision.test_config import SUPERVISOR_TOKEN
+agent = DecisionService(replace(Settings.from_env(), db_user="decision_agent", db_password="demo_agent_db_password"))
+manager = DecisionService(Settings.from_env())
+created = agent.submit("101", "E01", "请查阅；这段说明不是证据")
+approved = manager.approve(created["id"], SUPERVISOR_TOKEN, "同意创建复核任务")
+print(approved["task"]["id"])
+')
+docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_reader \
+  -e DECISION_DB_PASSWORD=demo_reader_db_password \
+  --entrypoint python decision -m decision.cli trace --task-id "$TASK_ID"
+docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_reader \
+  -e DECISION_DB_PASSWORD=demo_reader_db_password \
+  --entrypoint python decision -m decision.cli trace --task-id 999999999
+```
+
+单独查询已有任务时：`python -m decision.cli trace --task-id <任务编号>`。容器里的数据库账号使用 `decision_reader`。
+
+两个库必须一起备份：决策库 `decision_loop` 和采购库 `procurement`。供应风险复核任务在采购库，其外键指向决策库的审批记录，也指向采购库的订单和供应中断事件。执行尝试在决策库，外键同时指向决策记录和采购库里的任务。只还原其中一个库、或先写入仍引用未还原表的行，跨库外键都会失败。这些外键没有级联删除。
+
+备份示例（项目名与上面一致；演示口令只用于本独立环境）：
+
+```bash
+mkdir -p /tmp/vkg-decision-backup
+docker compose -f compose.decision.yml exec -T mysql \
+  mysqldump -uroot -pdemo_root_password --single-transaction --no-tablespaces \
+  decision_loop > /tmp/vkg-decision-backup/decision_loop.sql
+docker compose -f compose.decision.yml exec -T mysql \
+  mysqldump -uroot -pdemo_root_password --single-transaction --no-tablespaces \
+  procurement > /tmp/vkg-decision-backup/procurement.sql
+```
+
+还原时先让被引用的表就绪，再写入引用它们的表，顺序是：
+
+1. 采购库中的供应商、采购订单、供应中断事件，以及其他不引用决策库的表。
+2. 决策库中的用户、决策记录、审批记录。此时还不要写入执行尝试。
+3. 采购库中的供应风险复核任务。它依赖审批记录、订单和事件都已存在。
+4. 决策库中的执行尝试。它依赖决策记录，成功尝试还依赖已经还原的任务编号。
+
+不要先恢复带有任务行的完整采购库，除非决策库的审批记录已经就位；也不要先恢复带有执行尝试的完整决策库，除非任务表已经就位。测试会把 E01、订单和供应商恢复到演示初始行，并删掉测试插入的事件。确认结束后只清理本项目：
+
+```bash
+docker compose -f compose.decision.yml down --volumes --remove-orphans
+```
+
 MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。批准和执行复用这把推理锁。
 
 完整新模块验收包含真实并发提交、参数忽略、过时规则、版本核验、哈希排除项、空白节点、计算期间文件变化和权限探针：
