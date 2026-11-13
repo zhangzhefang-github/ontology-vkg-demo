@@ -4,10 +4,12 @@
 
 ## 独立环境
 
-新闭环使用独立镜像和 Compose 配置，不改变阶段二推理镜像。以下命令从仓库根目录执行；宿主机只需 Docker Compose。项目名同时用于隔离镜像标签、网络、容器和卷，无宿主机端口发布。
+新闭环使用独立镜像和 Compose 配置，不改变阶段二推理镜像。以下命令从仓库根目录执行；宿主机只需 Git 与 Docker Compose。项目名同时用于隔离镜像标签、网络、容器和卷，无宿主机端口发布。
 
 ```bash
 export DECISION_PROJECT=ontology-vkg-decision-demo
+export CODE_COMMIT=$(git rev-parse HEAD)
+export DECISION_GIT_COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
 docker compose -f compose.decision.yml up -d --build --wait mysql ontop
 docker compose -f compose.decision.yml build decision
 ```
@@ -25,7 +27,7 @@ docker compose -f compose.decision.yml run --rm -T --entrypoint python decision 
 
 正常结果只有订单 101，证据包括 E01、交付暂停事件、推出的供应中断事件及 R-01 规则应用。查询不写决策或业务数据，推理服务错误以失败返回。
 
-运行一次实际 stdio 握手、工具枚举与查询检查（输出应只含 `query_supply_review`）：
+运行一次实际 stdio 握手、工具枚举与查询检查（工具列表应只有 `query_supply_review` 和 `submit_supply_review`，检查会提交或返回一条建议）：
 
 ```bash
 docker compose -f compose.decision.yml run --rm -T --entrypoint python decision \
@@ -40,13 +42,17 @@ docker compose -f compose.decision.yml run --rm -T --entrypoint python decision 
     "procurement-supply-review": {
       "command": "docker",
       "args": ["compose", "-f", "/absolute/path/to/compose.decision.yml", "run", "--rm", "-T", "decision"],
-      "env": {"DECISION_PROJECT": "ontology-vkg-decision-demo"}
+      "env": {
+        "DECISION_PROJECT": "ontology-vkg-decision-demo",
+        "CODE_COMMIT": "替换为完整代码提交SHA",
+        "DECISION_GIT_COMMON_DIR": "/absolute/path/to/common-git-dir"
+      }
     }
   }
 }
 ```
 
-替换绝对路径，并保持项目名与启动命令一致。第一张任务只提供 `query_supply_review`；提交建议由后续任务加入。审批、执行和追溯不注册为 Agent 工具。日志使用 stderr，不往协议 stdout 打印诊断。
+替换绝对路径、完整代码提交和 Git common-dir（上面的 Git 命令可获得），并保持项目名与启动命令一致。代码提交必填，容器只读挂载 Git 对象以核对实际核心文件与该提交是否一致；Git worktree 的 `.git` 是指针文件，因此不能直接作为对象目录挂载。MCP 仅提供查询和提交建议两个工具。审批、执行和追溯不注册为 Agent 工具。日志使用 stderr，不往协议 stdout 打印诊断。
 
 ## 验收与清理
 
@@ -61,3 +67,26 @@ docker compose -f compose.decision.yml down --volumes --remove-orphans
 ```
 
 依赖选择依据见 [技术选型](decision-loop-technology-selection.md)。`requirements-decision.in` 是直接依赖输入，`requirements-decision.txt` 固定传递依赖与 SHA-256；镜像使用 `--require-hashes` 安装。依赖锁由 Python 3.12 容器中的 `pip-compile --generate-hashes` 生成。
+
+## 提交建议与不可变证据
+
+提交只点名订单、事件并可附说明，系统重新计算后生成待审批决策。Agent 说明标为不是证据；动作、采购员角色、描述和证据均由系统决定。重复或并发提交返回已有占位记录，不覆盖证据或说明，也不重新复核。查询只附带占位记录，不改变状态。
+
+```bash
+docker compose -f compose.decision.yml run --rm -T --entrypoint python decision \
+  -c 'import json; from decision.service import DecisionService; print(json.dumps(DecisionService().submit("101", "E01", "请主管复核；说明不是证据"), ensure_ascii=False))'
+```
+
+证据包含完整基础事实图的排序 N-Triples、快照 SHA-256、规则应用、绑定业务事实、业务前提哈希、语义版本指纹、完整代码提交和两份本体及规则原文。空白节点、核心与代码提交不符、核心加载后改变或计算期间输入变更都拒绝创建；基础事实提前包含父类仍作为技术失败。事实哈希只用于完整性，不参与业务失效判断。
+
+MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。
+
+完整新模块验收包含真实并发提交、参数忽略、过时规则、版本核验、哈希排除项、空白节点、计算期间文件变化和权限探针：
+
+```bash
+docker compose -f compose.decision.yml run --rm -T \
+  -e TEST_DB_PASSWORD=demo_root_password --entrypoint python decision \
+  -B -m unittest discover -s decision -p 'test_*.py'
+```
+
+上面的管理密码仅用于测试夹具；正常 MCP 启动和 stdio smoke 不注入它。若本机下载 Debian 索引过慢，可在镜像构建时设置 `DECISION_DEBIAN_MIRROR` 为可达的 Debian 镜像根地址（包含 `/debian` 和 `/debian-security` 的父地址）；默认仍为 `https://deb.debian.org`，APT 的 Release 签名校验保持启用。后续构建沿用同一镜像参数可复用 Git 安装层。

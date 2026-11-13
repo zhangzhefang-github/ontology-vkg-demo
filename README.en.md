@@ -141,4 +141,4 @@ Licensed under the [MIT License](LICENSE).
 
 ## Supply review decision loop
 
-See the [decision-loop guide](docs/decision-loop.md) for the isolated Compose environment and MCP stdio query. It reuses R-01 to identify orders needing supply review; it does not change orders or claim they cannot be delivered.
+See the [decision-loop guide](docs/decision-loop.md) for the isolated Compose environment, MCP stdio query and proposal submission. It reuses R-01 to identify orders needing supply review; it does not change orders or claim they cannot be delivered. Proposals preserve immutable evidence for an order/event pair and deduplicate repeated or concurrent submissions. Configure code provenance and the Git object directory before running.

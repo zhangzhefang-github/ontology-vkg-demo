@@ -14,6 +14,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./sql/decision-schema.sql:/docker-entrypoint-initdb.d/03-decision-schema.sql:ro
       - ./sql/decision-source-permissions.sql:/docker-entrypoint-initdb.d/02-source-permissions.sql:ro
     healthcheck:
       # TCP avoids the temporary socket-only server used during initialization.
@@ -62,10 +63,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.decision
+      args:
+        DEBIAN_MIRROR: ${DECISION_DEBIAN_MIRROR:-https://deb.debian.org}
     image: ${DECISION_PROJECT:-ontology-vkg-decision}-app:local
     environment:
       ONTOP_ENDPOINT: http://ontop:8080/sparql
+      DECISION_DB_HOST: mysql
+      DECISION_DB_USER: decision_agent
+      DECISION_DB_PASSWORD: demo_agent_db_password
+      CODE_COMMIT: ${CODE_COMMIT:-}
+      DECISION_GIT_DIR: /git
     volumes:
+      - ${DECISION_GIT_COMMON_DIR:-./.git}:/git:ro
       - ./scripts:/app/scripts:ro
       - ./decision:/app/decision:ro
       - ./reasoner:/app/reasoner:ro
