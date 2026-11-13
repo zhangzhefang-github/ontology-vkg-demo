@@ -623,23 +623,65 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(approved['task']['order'], '101')
         self.assertEqual(approved['task']['event'], 'E01')
 
-    def test_missing_bound_row_blocks_retry_even_when_compute_fails(self):
+    def test_missing_bound_row_invalidates_when_execution_check_is_incomplete(self):
+        """批准后的第一次执行若检查没做完且绑定行已不存在，按业务失效处理。"""
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+
+        def delete_event():
+            self._sql("DELETE FROM procurement.supply_disruption_event WHERE event_id='E01'")
+
+        with scripted_endpoint([
+            {'turtle': VALID_TURTLE},
+            {'fail': True, 'mutate': delete_event},
+        ]) as endpoint:
+            invalidated = self._manager(endpoint).approve(
+                decision['id'], SUPERVISOR_TOKEN, '执行检查未完成且事件行已删除',
+            )
+        self.assertEqual(invalidated['approval_status'], 'INVALIDATED')
+        self.assertEqual(invalidated['execution_status'], 'NOT_STARTED')
+        self.assertIsNone(invalidated['occupancy'])
+        self.assertIsNone(invalidated['task'])
+        self.assertEqual(invalidated['attempts'], [])
+        self.assertIn('绑定的事件行已经不存在', invalidated['invalidation_reason'])
+        approval = invalidated['approval']
+        self.assertEqual(approval['conclusion'], 'APPROVE')
+        self.assertEqual(approval['reason'], '执行检查未完成且事件行已删除')
+        with self.assertRaises(ExecutionRejected):
+            self.manager.execute(decision['id'])
+        shown = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
+        self.assertEqual(shown['approval_status'], 'INVALIDATED')
+        self.assertEqual(shown['approval']['id'], approval['id'])
+        self.assertEqual(shown['approval']['conclusion'], 'APPROVE')
+        self.assertEqual(shown['attempts'], [])
+        self.assertIsNone(shown['task'])
+        self.assertIsNone(shown['occupancy'])
+        self._restore_business()
+        reopened = self.agent.submit('101', 'E01', '占位已释放')
+        self.assertNotEqual(reopened['id'], decision['id'])
+        self.assertEqual(reopened['approval_status'], 'PENDING')
+
+    def test_missing_bound_row_invalidates_retry_when_compute_fails(self):
         decision = self.agent.submit('101', 'E01', 'Agent说明')
         with scripted_endpoint([{'turtle': VALID_TURTLE}, {'fail': True}]) as endpoint:
             failed = self._manager(endpoint).approve(decision['id'], SUPERVISOR_TOKEN, '先失败')
         self.assertEqual(failed['execution_status'], 'FAILED')
+        self.assertEqual(failed['occupancy'], 1)
         self._sql("DELETE FROM procurement.supply_disruption_event WHERE event_id='E01'")
-        blocked = self._manager('http://127.0.0.1:1/sparql').execute(decision['id'])
-        self.assertEqual(blocked['approval_status'], 'APPROVED')
-        self.assertEqual(blocked['approval']['id'], failed['approval']['id'])
-        self.assertEqual(blocked['execution_status'], 'BLOCKED')
-        self.assertIsNone(blocked['occupancy'])
-        self.assertIsNone(blocked['task'])
-        self.assertIn('绑定的事件行已经不存在', blocked['attempts'][-1]['mismatches'])
-        self.assertEqual(blocked['attempts'][-1]['outcome'], 'BLOCKED')
-        self.assertEqual([item['outcome'] for item in blocked['attempts']], ['FAILED', 'BLOCKED'])
-        repeated = self.manager.execute(decision['id'])
-        self.assertEqual(repeated['attempts'], blocked['attempts'])
+        invalidated = self._manager('http://127.0.0.1:1/sparql').execute(decision['id'])
+        self.assertEqual(invalidated['approval_status'], 'INVALIDATED')
+        self.assertEqual(invalidated['approval']['id'], failed['approval']['id'])
+        self.assertEqual(invalidated['approval']['conclusion'], 'APPROVE')
+        self.assertEqual(invalidated['execution_status'], 'FAILED')
+        self.assertIsNone(invalidated['occupancy'])
+        self.assertIsNone(invalidated['task'])
+        self.assertIn('绑定的事件行已经不存在', invalidated['invalidation_reason'])
+        self.assertEqual([item['outcome'] for item in invalidated['attempts']], ['FAILED'])
+        with self.assertRaises(ExecutionRejected):
+            self.manager.execute(decision['id'])
+        shown = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
+        self.assertEqual(shown['approval_status'], 'INVALIDATED')
+        self.assertEqual(shown['approval']['id'], failed['approval']['id'])
+        self.assertEqual(shown['attempts'], invalidated['attempts'])
 
     def test_unrelated_changes_do_not_block_a_retry(self):
         decision = self.agent.submit('101', 'E01', 'Agent说明')
