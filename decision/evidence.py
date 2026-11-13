@@ -64,25 +64,30 @@ def verify_code(settings, core_bytes):
     return commit
 
 
+def bound_facts(graph, application):
+    """从规则应用提取进入业务前提哈希的绑定事实。"""
+    order = URIRef(core.ORDER_PREFIX + application['order'])
+    event = URIRef(core.EVENT_PREFIX + application['event'])
+    return {
+        'order_status': application['order_status'],
+        'order_supplier': str(graph.value(order, core.EX.orderedFrom)),
+        'event_is_current': application['event_is_current'],
+        'affected_supplier': str(graph.value(event, core.EX.affectsSupplier)),
+        'event_direct_types': list(application['event_direct_types']),
+    }
+
+
 def capture(result, application, material, fingerprint, commit):
     graph = result.base_facts
     if any(isinstance(node, BNode) for triple in graph for node in triple):
         raise InvalidEvidence('基础事实含有空白节点，不能创建决策记录')
     facts_nt = ''.join(sorted(graph.serialize(format='nt').splitlines(keepends=True)))
-    order = URIRef(core.ORDER_PREFIX + application['order'])
-    event = URIRef(core.EVENT_PREFIX + application['event'])
-    bound_facts = {
-        'order_status': application['order_status'],
-        'order_supplier': str(graph.value(order, core.EX.orderedFrom)),
-        'event_is_current': application['event_is_current'],
-        'affected_supplier': str(graph.value(event, core.EX.affectsSupplier)),
-        'event_direct_types': application['event_direct_types'],
-    }
+    bound = bound_facts(graph, application)
     return {
         'facts_nt': facts_nt, 'facts_hash': digest(facts_nt.encode()),
-        'application': application, 'bound_facts': bound_facts,
+        'application': application, 'bound_facts': bound,
         'semantic_fingerprint': fingerprint,
-        'precondition_hash': precondition_hash(bound_facts, fingerprint),
+        'precondition_hash': precondition_hash(bound, fingerprint),
         'code_commit': commit,
         'ontop_ontology_text': material['ontop_ontology'].decode(),
         'ontology_text': material['ontology'].decode(),

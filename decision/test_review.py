@@ -20,6 +20,8 @@ class ReviewTests(unittest.TestCase):
     def setUp(self):
         self.admin = pymysql.connect(host='mysql', user='root', password=os.environ['TEST_DB_PASSWORD'], autocommit=True)
         with self.admin.cursor() as cursor:
+            cursor.execute('DELETE FROM decision_loop.execution_attempt')
+            cursor.execute('DELETE FROM procurement.supply_risk_review_task')
             cursor.execute('DELETE FROM decision_loop.approval_record')
             cursor.execute('DELETE FROM decision_loop.decision_record')
         self.agent = DecisionService(Settings.from_env())
@@ -92,16 +94,6 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(approved['approval']['conclusion'], 'REJECT')
         self.assertIsNone(approved['execution_status'])
         self.assertEqual(self.agent.submit('101', 'E01', '试图重开'), rejected)
-
-    def test_pending_approve_does_not_write_or_execute(self):
-        decision = self.agent.submit('101', 'E01', 'Agent说明')
-        with self.assertRaisesRegex(NotImplementedError, '批准事务不在本票范围'):
-            self.manager.approve(decision['id'], SUPERVISOR_TOKEN, '先不要批准')
-        current = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
-        self.assertEqual(current['approval_status'], 'PENDING')
-        self.assertIsNone(current['approval'])
-        self.assertIsNone(current['execution_status'])
-        self.assertEqual(current['evidence'], decision['evidence'])
 
     def test_blank_reason_does_not_create_an_approval(self):
         decision = self.agent.submit('101', 'E01', 'Agent说明')
