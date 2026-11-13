@@ -131,9 +131,9 @@ docker compose -f compose.decision.yml run --rm -T \
 
 采购主管用个人令牌查看证据并拒绝。展示、批准和拒绝共用同一身份校验：令牌哈希匹配，且用户是启用的采购主管。库内只有哈希，比较采用恒定时间；明文演示值只在 `decision/test_config.py`，不作为数据库列，也不进入应用或数据库日志。Agent 说明在结果里标为不是证据。
 
-拒绝必须有非空理由，不先做失效复核。审批记录保存拒绝人、当时角色、理由和数据库服务器时间，写入后应用账号不能改，每条决策至多一条。拒绝后的决策保持已拒绝并继续占位，不能撤回或重开；同一订单和事件的后续建议返回这条记录。对已有终态再次批准或拒绝只返回原结论，不新增审批，也不触发执行。待审批记录的完整批准事务不在这一步。
+拒绝必须有非空理由，不先做失效复核。审批记录保存拒绝人、当时角色、理由和数据库服务器时间，写入后应用账号不能改，每条决策至多一条。拒绝后的决策保持已拒绝并继续占位，不能撤回或重开；同一订单和事件的后续建议返回这条记录。对已有终态再次批准或拒绝只返回原结论，不新增审批，也不触发执行。
 
-命令行进程使用审批通道账号 `decision_manager`。该账号只能读取用户与决策、插入审批记录，并更新决策的审批状态列；不能改证据列，不能删除，也不能写供应商、订单和事件。MCP 进程仍只使用 `decision_agent`，工具仍只有查询和提交建议。下面的命令沿用本节前面的项目名、代码提交和 Git 目录。令牌从测试配置读入，避免出现在命令参数里。
+命令行进程使用审批通道账号 `decision_manager`。查看和拒绝时，它读取用户与决策、插入审批记录，并只更新允许的决策状态列；不能改证据列，不能删除，也不能写供应商、订单和事件。MCP 进程仍只使用 `decision_agent`，工具仍只有查询和提交建议。下面的命令沿用本节前面的项目名、代码提交和 Git 目录。令牌从测试配置读入，避免出现在命令参数里。
 
 ```bash
 docker compose -f compose.decision.yml run --rm -T \
@@ -155,7 +155,34 @@ main(["approve", "--id", decision_id, "--token", SUPERVISOR_TOKEN, "--comment", 
 
 单独查看或拒绝时，把上面的 `decision_id` 换成已有编号，并只调用对应子命令：`python -m decision.cli show --id <编号> --token <令牌>` 或 `python -m decision.cli reject --id <编号> --token <令牌> --reason <理由>`。容器里的数据库账号必须是 `decision_manager`。
 
-MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。
+## 批准与执行
+
+批准复用采购主管身份校验。事务外先做推理和版本检查；事务内先排他锁定决策并确认仍是待审批，再按订单、事件顺序加共享锁，比对绑定事实和业务前提后才写入。业务前提不一致时把决策记为已失效、保存原因并释放占位，不产生审批记录。检查没有做完则保持待审批。计算失败时，若绑定的订单行或事件行已经不存在，仍按业务失效处理。
+
+批准事务只写审批记录并把执行状态置为未开始，提交之后才在另一个事务尝试执行。执行前再次在事务外重算指纹并推理，事务内用同一锁顺序重新比对。执行必须读到结论为批准的审批记录，且执行状态是未开始或执行失败。业务前提不再成立时保留已批准、把执行记为被阻止、释放占位且不创建任务。Ontop 不可达或基础事实提前含有父类时记为执行失败并保留占位。供应商停用、改名、订单金额以及其他订单或事件的变化不阻止执行。
+
+任务写在采购库，只包含编号、来源决策、订单、事件、采购员角色、系统生成的供应风险复核描述和创建时间。它引用审批记录、订单和事件；同一来源决策至多一条任务。任务不带优先级、截止时间或审批意见，也不修改订单。每次实际执行尝试追加不可改记录。执行成功和执行被阻止是终态，再次调用不写库；执行失败可用只接收决策编号的命令重试，每次都完整复核。
+
+```bash
+docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_manager \
+  -e DECISION_DB_PASSWORD=demo_manager_db_password \
+  --entrypoint python decision -B -c '
+from decision.cli import main
+from decision.service import DecisionService, Settings
+from decision.test_config import SUPERVISOR_TOKEN
+from dataclasses import replace
+agent = DecisionService(replace(Settings.from_env(), db_user="decision_agent", db_password="demo_agent_db_password"))
+created = agent.submit("101", "E01", "请主管批准；这段说明不是证据")
+decision_id = str(created["id"])
+main(["approve", "--id", decision_id, "--token", SUPERVISOR_TOKEN, "--comment", "同意创建复核任务"])
+main(["execute", "--id", decision_id])
+'
+```
+
+上面的第二次 `execute` 返回已经创建的任务，不再写库。审批执行账号是 `decision_manager`：只能插入审批记录、执行尝试和任务，并更新决策状态、占位和失效原因；不能改证据，不能删除，也不能写供应商、订单和事件。MCP 仍然只暴露查询和提交建议。
+
+MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。批准和执行复用这把推理锁。
 
 完整新模块验收包含真实并发提交、参数忽略、过时规则、版本核验、哈希排除项、空白节点、计算期间文件变化和权限探针：
 

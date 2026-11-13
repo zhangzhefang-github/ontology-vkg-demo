@@ -13,17 +13,26 @@ def connect(settings):
     )
 
 
+def json_value(value):
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode()
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 def decision_response(row, approval=None):
     if row is None:
         return None
     return {
         'id': row['id'], 'order': str(row['order_id']), 'event': row['event_id'],
         'approval_status': row['approval_status'], 'execution_status': row['execution_status'],
-        'occupancy': row['occupancy'], 'created_at': row['created_at'].isoformat(),
+        'occupancy': row['occupancy'], 'invalidation_reason': row['invalidation_reason'],
+        'created_at': row['created_at'].isoformat(),
         'action': 'create_supply_risk_review_task', 'assigned_role': '采购员',
         'description': row['description'], 'evidence': json.loads(row['evidence']),
         'agent_note': {'text': row['agent_note'], 'is_evidence': False},
-        'approval': approval,
+        'approval': approval, 'task': None, 'attempts': [],
     }
 
 
@@ -57,3 +66,48 @@ def decision_by_id(connection, decision_id, *, lock=False):
     if row is None:
         raise LookupError('决策记录不存在')
     return decision_response(row, approval_for(connection, decision_id))
+
+
+def task_for(connection, decision_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT * FROM procurement.supply_risk_review_task WHERE source_decision_id=%s',
+            (decision_id,),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        'id': row['id'], 'source_decision_id': row['source_decision_id'], 'approval_id': row['approval_id'],
+        'order': str(row['order_id']), 'event': row['event_id'], 'assigned_role': row['assigned_role'],
+        'description': row['description'], 'created_at': row['created_at'].isoformat(),
+    }
+
+
+def attempts_for(connection, decision_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT * FROM execution_attempt WHERE decision_id=%s ORDER BY id',
+            (decision_id,),
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            'id': row['id'], 'decision_id': row['decision_id'], 'outcome': row['outcome'],
+            'reason': row['reason'], 'mismatches': json_value(row['mismatches']),
+            'semantic_fingerprint': json_value(row['semantic_fingerprint']),
+            'code_commit': row['code_commit'], 'task_id': row['task_id'],
+            'created_at': row['created_at'].isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def attach_execution(connection, decision):
+    """主管通道才能读取任务和执行尝试；查询响应保持默认空值。"""
+    if decision is None:
+        return None
+    presented = dict(decision)
+    presented['task'] = task_for(connection, decision['id'])
+    presented['attempts'] = attempts_for(connection, decision['id'])
+    return presented
