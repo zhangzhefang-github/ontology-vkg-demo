@@ -68,6 +68,8 @@ E01 rdf:type SupplyDisruptionEvent        # OWL-RL 新增
 
 风险条件不在 Python `if` 分支中。SPARQL CONSTRUCT 同时产生一个内存中的 `RuleApplication`，记录规则编号、订单、事件和供应商绑定，用于生成本 Demo 的事实依据。
 
+核心要求规则查询返回 RDF 图。误传 `SELECT` 规则时会抛出 `ValueError`，提示“业务规则必须返回 CONSTRUCT 图”；经 CLI 调用时映射为退出码 5。
+
 结论只表示“需要供应风险复核”，不能表述为“必然无法交付”。未产生结论也不能表述为“订单安全”。
 
 ## 运行链路
@@ -121,6 +123,8 @@ docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
   -B -m unittest discover -s reasoner -p 'test_*.py'
 ```
 
+当前测试还覆盖非 URI 事件和类型的忽略、错误规则形式、非法 `--expect` 参数，以及核心未预期异常的 CLI 输出。非法 `--expect` 值在核心计算之前以退出码 2 失败；核心未预期异常映射为退出码 5。具体测试、独立运行命令和错误输出语义见[验证矩阵](validation.md#核心与-cli-边界测试)。
+
 ## 对照实验
 
 ```bash
@@ -134,7 +138,7 @@ bash scripts/test-phase2.sh
 3. E01 失效时，供应商仍为 DISABLED，但 SQL 和规则均无结果；
 4. 恢复 E01 后，从空图重新计算并再次命中订单 101。
 
-事件状态由 shell `trap` 在成功、失败或中断时恢复。输出证据位于 `.artifacts/phase2/`。
+shell `trap` 会在成功、失败或中断时尽力恢复事件状态；恢复失败时的处理见[验证说明](validation.md#发布前命令)。输出证据位于 `.artifacts/phase2/`。
 
 等价 SQL 位于 [`queries/needs-review-orders.sql`](../queries/needs-review-orders.sql)。SQL 同样能实现当前判断，并直接枚举本 Demo 已知的具体事件类型。本体方案让 R-01 依赖抽象的 `SupplyDisruptionEvent`，具体类型的分类关系可以在本体层维护。
 

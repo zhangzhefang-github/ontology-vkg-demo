@@ -28,7 +28,11 @@ docker compose config --quiet
 bash scripts/test-sql.sh
 bash scripts/test-sparql.sh
 bash scripts/test-phase2.sh
+docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
+  -B -m unittest discover -s reasoner -p 'test_*.py'
 ```
+
+完整测试需要 MySQL、Ontop 健康且 E01 当前有效；同一数据库上的第二阶段实验与完整核心、CLI 测试须串行执行。可独立运行的边界测试见[验证说明](docs/validation.md#核心与-cli-边界测试)。
 
 Pull Request 应说明问题、行为变化、验证结果和已知限制。安全问题不要提交公开 Issue，请遵循 [`SECURITY.md`](SECURITY.md)。
 
@@ -46,5 +50,7 @@ For code changes:
 4. Keep business conditions in `rules/`; do not hard-code risk logic in Python.
 5. Update the affected English/Chinese entry point or detailed documentation.
 6. Run the commands shown above before opening a pull request.
+
+The full suite requires healthy MySQL and Ontop services and an active E01. Run the phase-two experiments and full core/CLI tests sequentially against a shared database. The [validation guide](docs/validation.md#核心与-cli-边界测试) (Chinese) also provides a standalone command for the boundary tests that do not need those services.
 
 Describe the problem, behavior change, verification, and known limitations in the pull request. Follow [`SECURITY.md`](SECURITY.md) for security reports.
