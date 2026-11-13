@@ -82,7 +82,7 @@ Complete Phase 2 counterfactual suite:
 bash scripts/test-phase2.sh
 ```
 
-The suite verifies normal reasoning, removal of the subclass axiom, event deactivation, event restoration, and an equivalent SQL query. A shell `trap` restores E01 after success, failure, or interruption. A successful run ends with:
+The suite verifies normal reasoning, removal of the subclass axiom, event deactivation, event restoration, and an equivalent SQL query. A shell `trap` attempts to restore E01 after success, failure, or interruption; see the [validation guide](docs/validation.md#发布前命令) (Chinese) for recovery if that attempt fails. A successful run ends with:
 
 ```text
 Phase 2 ALL PASS
@@ -95,7 +95,7 @@ docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
   -B -m unittest discover -s reasoner -p 'test_*.py'
 ```
 
-The tests cover structured results, types and subclass axioms, rule query form, and CLI error handling. See the [coverage matrix and standalone test command](docs/validation.md#核心与-cli-边界测试) (Chinese).
+Run the phase-two experiments and full core/CLI tests sequentially against a shared database to avoid interference from E01 state changes. The tests cover structured results, types and subclass axioms, rule query form, and CLI error handling. See the [coverage matrix and standalone test command](docs/validation.md#核心与-cli-边界测试) (Chinese).
 
 ## Scope and trade-offs
 

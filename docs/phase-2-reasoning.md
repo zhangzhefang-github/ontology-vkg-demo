@@ -138,7 +138,7 @@ bash scripts/test-phase2.sh
 3. E01 失效时，供应商仍为 DISABLED，但 SQL 和规则均无结果；
 4. 恢复 E01 后，从空图重新计算并再次命中订单 101。
 
-事件状态由 shell `trap` 在成功、失败或中断时恢复。输出证据位于 `.artifacts/phase2/`。
+shell `trap` 会在成功、失败或中断时尽力恢复事件状态；恢复失败时的处理见[验证说明](validation.md#发布前命令)。输出证据位于 `.artifacts/phase2/`。
 
 等价 SQL 位于 [`queries/needs-review-orders.sql`](../queries/needs-review-orders.sql)。SQL 同样能实现当前判断，并直接枚举本 Demo 已知的具体事件类型。本体方案让 R-01 依赖抽象的 `SupplyDisruptionEvent`，具体类型的分类关系可以在本体层维护。
 

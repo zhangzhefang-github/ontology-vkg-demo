@@ -82,7 +82,7 @@ bash scripts/test-sparql.sh
 bash scripts/test-phase2.sh
 ```
 
-该脚本自动验证正常推理、移除继承公理、事件失效、事件恢复和等价 SQL。测试期间对 E01 的修改由 shell `trap` 恢复。成功时最后输出：
+该脚本自动验证正常推理、移除继承公理、事件失效、事件恢复和等价 SQL。测试结束时 shell `trap` 会尽力恢复 E01；恢复失败时的处理见[验证说明](docs/validation.md#发布前命令)。成功时最后输出：
 
 ```text
 Phase 2 ALL PASS
@@ -95,7 +95,7 @@ docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
   -B -m unittest discover -s reasoner -p 'test_*.py'
 ```
 
-测试覆盖结构化结果、类型与继承公理、规则形式及 CLI 错误处理，详见[测试覆盖与独立运行命令](docs/validation.md#核心与-cli-边界测试)。
+同一数据库上的第二阶段实验和完整核心、CLI 测试须串行运行，避免 E01 状态切换干扰测试。测试覆盖结构化结果、类型与继承公理、规则形式及 CLI 错误处理，详见[测试覆盖与独立运行命令](docs/validation.md#核心与-cli-边界测试)。
 
 ## 架构边界
 

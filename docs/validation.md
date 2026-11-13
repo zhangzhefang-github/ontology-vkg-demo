@@ -26,7 +26,20 @@ docker compose --profile phase2 run --rm -T --entrypoint python reasoner \
   -B -m unittest discover -s reasoner -p 'test_*.py'
 ```
 
-完整测试需要 MySQL 和 Ontop 健康，且 E01 当前有效；`test-phase2.sh` 结束时会恢复 E01。核心与 CLI 测试也由持续集成运行。
+完整测试需要 MySQL 和 Ontop 健康，且 E01 当前有效。同一数据库上的第二阶段实验与完整核心、CLI 测试须串行执行；实验会切换 E01 状态，并发运行可能导致结果不确定。核心与 CLI 测试也由持续集成运行。
+
+`test-phase2.sh` 通过退出 trap 尽力恢复 E01，但恢复失败会被忽略；若数据库当时不可用，E01 可能仍为失效状态。服务恢复后，可在下一次验证前显式恢复并查询确认：
+
+```bash
+docker compose exec -T mysql sh -c '
+  MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --protocol=TCP -h 127.0.0.1 -u root "$MYSQL_DATABASE"
+' <<'SQL'
+UPDATE supply_disruption_event SET is_current = TRUE WHERE event_id = 'E01';
+SELECT event_id, is_current FROM supply_disruption_event WHERE event_id = 'E01';
+SQL
+```
+
+确认查询返回 E01 的 `is_current` 为 1 后再运行完整测试。
 
 ## 验证矩阵
 
@@ -63,7 +76,11 @@ docker compose --profile phase2 run --rm -T --no-deps --entrypoint python reason
   reasoner.test_cli.CLITests.test_unexpected_compute_error_is_reported_without_stdout
 ```
 
-2026-11-12 在现有推理镜像中执行上述独立命令，4 个测试全部通过（`Ran 4 tests`、`OK`）。本次未重跑完整的 18 项测试和 MySQL、Ontop 对照实验。
+2026-11-12 的历史记录：在当时已有的推理镜像中执行上述独立命令，4 个测试全部通过（`Ran 4 tests`、`OK`）；该次未重跑完整的 18 项测试和 MySQL、Ontop 对照实验。
+
+2026-11-13 的 PR 准备验证：本地缺少 Compose v2 和推理镜像，改在临时 Python 虚拟环境安装 `requirements-reasoner.txt` 中锁定的依赖，执行同一组 4 项测试，全部通过。本地未执行上述容器命令。
+
+同日，[PR #5 的 CI 运行](https://github.com/zhangzhefang-github/ontology-vkg-demo/actions/runs/43373140428)验证了提交 `3ef4dea` 的合并结果：Compose 配置校验、SQL/SPARQL 对照、第二阶段完整实验及全部 18 项核心与 CLI 测试通过（`Phase 2 ALL PASS`、`Ran 18 tests`、`OK`）。CI 的完整测试与上述历史独立命令分别记录。
 
 这些测试验证错误处理和类型提取边界，不替代完整的 Ontop 集成与 SQL/SPARQL 对照实验。
 
@@ -93,7 +110,7 @@ R-01 命中: order=101, event=E01,
 | ---: | --- |
 | 2 | CLI 参数解析失败（如非法 `--expect`），或 Ontop 服务请求、响应异常；两者应结合 stderr 区分 |
 | 3 | 请求成功，但基础事实为空，或缺少具有具体类型的 URI 事件 |
-| 4 | 实验条件或断言失败，如 `--expect one` 缺少 `--expected-order`、基础事实提前包含供应中断事件父类，或命中结果不符 |
+| 4 | 实验条件或断言失败，如 `--expect one` 缺少 `--expected-order`、基础事实提前包含供应中断事件类型，或命中结果不符 |
 | 5 | 其他推理程序错误 |
 
 反事实场景明确预期“不命中”时返回 0；这与服务异常或数据意外为空不同。
