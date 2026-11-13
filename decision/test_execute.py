@@ -12,6 +12,7 @@ from pathlib import Path
 import pymysql
 
 from decision.auth import Unauthorized
+from decision.database import attach_execution, connect, decision_by_id
 from decision.service import CheckIncomplete, DecisionService, ExecutionRejected, Settings
 from decision.test_config import BUYER_TOKEN, SUPERVISOR_TOKEN
 from reasoner import silence_dependency_warnings
@@ -511,6 +512,190 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(shown['approval']['id'], rejected['approval']['id'])
         self.assertIsNone(shown['task'])
         self.assertEqual(shown['attempts'], [])
+
+    def test_execute_command_ignores_action_and_keeps_one_approval(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+
+        class ApproveWithoutExecution(DecisionService):
+            def execute(self, decision_id, **ignored_action_parameters):
+                connection = connect(self.settings)
+                try:
+                    current = decision_by_id(connection, decision_id)
+                    connection.rollback()
+                    return attach_execution(connection, current)
+                finally:
+                    connection.close()
+
+        approved = ApproveWithoutExecution(self.manager.settings).approve(
+            decision['id'], SUPERVISOR_TOKEN, '先批准，执行另走命令',
+        )
+        self.assertEqual(approved['approval_status'], 'APPROVED')
+        self.assertEqual(approved['execution_status'], 'NOT_STARTED')
+        self.assertEqual(approved['occupancy'], 1)
+        self.assertIsNone(approved['task'])
+        self.assertEqual(approved['attempts'], [])
+        executed = self.manager.execute(
+            decision['id'],
+            action='cancel_order',
+            order='102',
+            event='E99',
+            assigned_role='采购主管',
+            description='无法交付',
+            evidence={'facts_hash': '0' * 64},
+        )
+        self.assertEqual(executed['approval']['id'], approved['approval']['id'])
+        self.assertEqual(executed['approval']['conclusion'], 'APPROVE')
+        self.assertEqual(executed['execution_status'], 'SUCCEEDED')
+        self.assertEqual(executed['task']['order'], '101')
+        self.assertEqual(executed['task']['event'], 'E01')
+        self.assertEqual(executed['task']['assigned_role'], '采购员')
+        self.assertEqual(executed['task']['description'], '订单 101 因事件 E01 需要供应风险复核。')
+        self.assertNotIn('无法交付', executed['task']['description'])
+        self.assertEqual(executed['evidence'], decision['evidence'])
+        self.assertEqual(len(executed['attempts']), 1)
+        self.assertEqual(executed['attempts'][0]['outcome'], 'SUCCEEDED')
+
+    def test_ontop_outage_can_fail_twice_then_retry_creates_one_task(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        with scripted_endpoint([
+            {'turtle': VALID_TURTLE}, {'fail': True}, {'fail': True},
+        ]) as endpoint:
+            offline = self._manager(endpoint)
+            failed = offline.approve(decision['id'], SUPERVISOR_TOKEN, 'Ontop 不可用')
+            self.assertEqual(failed['approval_status'], 'APPROVED')
+            self.assertEqual(failed['execution_status'], 'FAILED')
+            self.assertEqual(failed['occupancy'], 1)
+            self.assertIsNone(failed['task'])
+            self.assertEqual([item['outcome'] for item in failed['attempts']], ['FAILED'])
+            second = offline.execute(decision['id'])
+        self.assertEqual(second['approval']['id'], failed['approval']['id'])
+        self.assertEqual(second['execution_status'], 'FAILED')
+        self.assertEqual(second['occupancy'], 1)
+        self.assertIsNone(second['task'])
+        self.assertEqual([item['outcome'] for item in second['attempts']], ['FAILED', 'FAILED'])
+        self.assertNotEqual(second['attempts'][0]['id'], second['attempts'][1]['id'])
+        self.assertEqual(
+            second['attempts'][0]['semantic_fingerprint'], decision['evidence']['semantic_fingerprint'],
+        )
+        self.assertEqual(
+            second['attempts'][1]['semantic_fingerprint'], decision['evidence']['semantic_fingerprint'],
+        )
+        recovered = self.manager.execute(decision['id'])
+        self.assertEqual(recovered['approval']['id'], failed['approval']['id'])
+        self.assertEqual(recovered['execution_status'], 'SUCCEEDED')
+        self.assertEqual(recovered['occupancy'], 1)
+        self.assertEqual(recovered['task']['order'], '101')
+        self.assertEqual(recovered['task']['event'], 'E01')
+        self.assertEqual(
+            [item['outcome'] for item in recovered['attempts']],
+            ['FAILED', 'FAILED', 'SUCCEEDED'],
+        )
+        self.assertEqual(recovered['attempts'][-1]['task_id'], recovered['task']['id'])
+        shown = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
+        self.assertEqual(shown['task']['id'], recovered['task']['id'])
+        self.assertEqual(shown['attempts'], recovered['attempts'])
+
+    def test_retry_blocks_when_binding_changes_then_new_decision_can_be_approved(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        with scripted_endpoint([{'turtle': VALID_TURTLE}, {'fail': True}]) as endpoint:
+            failed = self._manager(endpoint).approve(decision['id'], SUPERVISOR_TOKEN, '留下可重试的批准')
+        self.assertEqual(failed['execution_status'], 'FAILED')
+        self._sql("UPDATE procurement.supply_disruption_event SET is_current=FALSE WHERE event_id='E01'")
+        blocked = self.manager.execute(decision['id'])
+        self.assertEqual(blocked['approval_status'], 'APPROVED')
+        self.assertEqual(blocked['approval']['id'], failed['approval']['id'])
+        self.assertEqual(blocked['execution_status'], 'BLOCKED')
+        self.assertIsNone(blocked['occupancy'])
+        self.assertIsNone(blocked['task'])
+        self.assertEqual(blocked['attempts'][-1]['outcome'], 'BLOCKED')
+        self.assertIn('事件不再当前有效', blocked['attempts'][-1]['mismatches'])
+        repeated = self.manager.execute(decision['id'])
+        self.assertEqual(repeated['attempts'], blocked['attempts'])
+        self.assertEqual(repeated['attempts'][-1]['reason'], blocked['attempts'][-1]['reason'])
+        self._restore_business()
+        reopened = self.agent.submit('101', 'E01', '占位释放后重新建议')
+        self.assertNotEqual(reopened['id'], decision['id'])
+        approved = self.manager.approve(reopened['id'], SUPERVISOR_TOKEN, '重新审批')
+        self.assertEqual(approved['approval_status'], 'APPROVED')
+        self.assertEqual(approved['approval']['conclusion'], 'APPROVE')
+        self.assertNotEqual(approved['approval']['id'], failed['approval']['id'])
+        self.assertEqual(approved['execution_status'], 'SUCCEEDED')
+        self.assertEqual(approved['task']['order'], '101')
+        self.assertEqual(approved['task']['event'], 'E01')
+
+    def test_missing_bound_row_blocks_retry_even_when_compute_fails(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        with scripted_endpoint([{'turtle': VALID_TURTLE}, {'fail': True}]) as endpoint:
+            failed = self._manager(endpoint).approve(decision['id'], SUPERVISOR_TOKEN, '先失败')
+        self.assertEqual(failed['execution_status'], 'FAILED')
+        self._sql("DELETE FROM procurement.supply_disruption_event WHERE event_id='E01'")
+        blocked = self._manager('http://127.0.0.1:1/sparql').execute(decision['id'])
+        self.assertEqual(blocked['approval_status'], 'APPROVED')
+        self.assertEqual(blocked['approval']['id'], failed['approval']['id'])
+        self.assertEqual(blocked['execution_status'], 'BLOCKED')
+        self.assertIsNone(blocked['occupancy'])
+        self.assertIsNone(blocked['task'])
+        self.assertIn('绑定的事件行已经不存在', blocked['attempts'][-1]['mismatches'])
+        self.assertEqual(blocked['attempts'][-1]['outcome'], 'BLOCKED')
+        self.assertEqual([item['outcome'] for item in blocked['attempts']], ['FAILED', 'BLOCKED'])
+        repeated = self.manager.execute(decision['id'])
+        self.assertEqual(repeated['attempts'], blocked['attempts'])
+
+    def test_unrelated_changes_do_not_block_a_retry(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        with scripted_endpoint([{'turtle': VALID_TURTLE}, {'fail': True}]) as endpoint:
+            failed = self._manager(endpoint).approve(decision['id'], SUPERVISOR_TOKEN, '失败后改无关事实')
+        self.assertEqual(failed['execution_status'], 'FAILED')
+        original_hash = decision['evidence']['facts_hash']
+        self._sql(
+            "UPDATE procurement.supplier SET supplier_name='临时名称', supplier_status='ACTIVE' "
+            "WHERE supplier_id=1"
+        )
+        self._sql('UPDATE procurement.purchase_order SET amount=1 WHERE order_id=101')
+        self._sql("UPDATE procurement.purchase_order SET order_status='CANCELLED' WHERE order_id=102")
+        self._sql(
+            "INSERT INTO procurement.supply_disruption_event VALUES "
+            "('E99',2,'DeliverySuspensionEvent',FALSE)"
+        )
+        retried = self.manager.execute(decision['id'])
+        self.assertEqual(retried['approval']['id'], failed['approval']['id'])
+        self.assertEqual(retried['execution_status'], 'SUCCEEDED')
+        self.assertEqual(retried['evidence']['facts_hash'], original_hash)
+        self.assertNotEqual(retried['evidence']['facts_hash'], retried['evidence']['precondition_hash'])
+        self.assertEqual(retried['task']['order'], '101')
+        self.assertEqual(retried['task']['event'], 'E01')
+        self.assertEqual(retried['task']['description'], '订单 101 因事件 E01 需要供应风险复核。')
+        self.assertEqual([item['outcome'] for item in retried['attempts']], ['FAILED', 'SUCCEEDED'])
+        self.assertEqual(self.agent.query()['rule_applications'][0]['order_status'], 'PENDING')
+
+    def test_invalidated_decision_cannot_execute(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        self._sql("UPDATE procurement.supply_disruption_event SET is_current=FALSE WHERE event_id='E01'")
+        invalidated = self.manager.approve(decision['id'], SUPERVISOR_TOKEN, '不应留下批准')
+        self.assertEqual(invalidated['approval_status'], 'INVALIDATED')
+        self.assertIsNone(invalidated['approval'])
+        with self.assertRaises(ExecutionRejected):
+            self.manager.execute(decision['id'])
+        shown = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
+        self.assertEqual(shown['approval_status'], 'INVALIDATED')
+        self.assertEqual(shown['attempts'], [])
+        self.assertIsNone(shown['task'])
+        self.assertIsNone(shown['execution_status'])
+
+    def test_agent_account_cannot_execute(self):
+        decision = self.agent.submit('101', 'E01', 'Agent说明')
+        with scripted_endpoint([{'turtle': VALID_TURTLE}, {'fail': True}]) as endpoint:
+            failed = self._manager(endpoint).approve(decision['id'], SUPERVISOR_TOKEN, 'Agent 不能重试')
+        with self.assertRaises(pymysql.err.OperationalError):
+            self.agent.execute(
+                decision['id'], action='cancel_order', order='101', event='E01',
+                assigned_role='采购员', description='改写', evidence={'fake': True},
+            )
+        shown = self.manager.show(decision['id'], SUPERVISOR_TOKEN)
+        self.assertEqual(shown['execution_status'], 'FAILED')
+        self.assertEqual(shown['approval']['id'], failed['approval']['id'])
+        self.assertEqual(shown['attempts'], failed['attempts'])
+        self.assertIsNone(shown['task'])
 
     def test_unauthorized_approve_does_not_execute(self):
         decision = self.agent.submit('101', 'E01', 'Agent说明')

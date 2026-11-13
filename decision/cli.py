@@ -27,7 +27,10 @@ def main(argv=None) -> int:
     execute = commands.add_parser('execute', help='按决策编号重试执行，不再次批准')
     execute.add_argument('--id', type=int, required=True)
 
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    # 执行命令只认决策编号；动作、订单、事件、角色、描述或新证据即使传入也忽略。
+    if args.command != 'execute' and unknown:
+        parser.error('unrecognized arguments: ' + ' '.join(unknown))
     service = DecisionService()
     if args.command == 'show':
         result = service.show(args.id, args.token)

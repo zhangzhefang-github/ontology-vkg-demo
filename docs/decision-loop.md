@@ -180,7 +180,99 @@ main(["execute", "--id", decision_id])
 '
 ```
 
-上面的第二次 `execute` 返回已经创建的任务，不再写库。审批执行账号是 `decision_manager`：只能插入审批记录、执行尝试和任务，并更新决策状态、占位和失效原因；不能改证据，不能删除，也不能写供应商、订单和事件。MCP 仍然只暴露查询和提交建议。
+上面的第二次 `execute` 返回已经创建的任务，不再写库。审批执行账号是 `decision_manager`：只能插入审批记录、执行尝试和任务，并更新决策状态、占位和失效原因；不能改证据，不能删除，也不能写供应商、订单和事件。MCP 仍然只暴露查询和提交建议，外部 Agent 使用的 `decision_agent` 不能执行。`execute` 只接收 `--id`；若同时传入动作、订单、事件、角色、描述或新证据，这些参数被忽略，不会进入任务或证据。
+
+技术失败后不必再次批准。下面的演示保持真实 Ontop 运行：提交和批准前检查都转发到 Ontop，执行那一次请求返回失败。随后只用决策编号重试，并故意带上会被忽略的动作参数。重试应恰好创建一条任务；再执行一次应返回同一条任务，且不新增执行尝试。演示不修改供应商、订单或事件，也不停止 Ontop。订单 101 与事件 E01 当时不能已有占位决策，否则提交会返回原记录。标准输出是一行摘要 JSON。
+
+```bash
+docker compose -f compose.decision.yml run --rm -T \
+  -e DECISION_DB_USER=decision_manager \
+  -e DECISION_DB_PASSWORD=demo_manager_db_password \
+  --entrypoint python decision -B -c '
+import json, threading, urllib.request
+from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
+from contextlib import redirect_stdout
+from decision.cli import main
+from decision.service import DecisionService, Settings
+from decision.test_config import SUPERVISOR_TOKEN
+
+state = {"n": 0}
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+        state["n"] += 1
+        if state["n"] >= 3:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"unavailable")
+            return
+        request = urllib.request.Request(
+            "http://ontop:8080/sparql", data=body, method="POST",
+            headers={
+                "Accept": self.headers.get("Accept", "text/turtle"),
+                "Content-Type": self.headers.get("Content-Type", "application/sparql-query"),
+            },
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            payload = response.read()
+        self.send_response(200)
+        self.send_header("Content-Type", response.headers.get("Content-Type", "text/turtle"))
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+def run(argv):
+    buffer = StringIO()
+    with redirect_stdout(buffer):
+        code = main(argv)
+    if code != 0:
+        raise SystemExit(code)
+    return json.loads(buffer.getvalue())
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+worker = threading.Thread(target=server.serve_forever, daemon=True)
+worker.start()
+try:
+    endpoint = "http://127.0.0.1:%s/sparql" % server.server_port
+    agent = DecisionService(replace(
+        Settings.from_env(), endpoint=endpoint,
+        db_user="decision_agent", db_password="demo_agent_db_password",
+    ))
+    manager = DecisionService(replace(Settings.from_env(), endpoint=endpoint))
+    created = agent.submit("101", "E01", "说明不是证据")
+    failed = manager.approve(created["id"], SUPERVISOR_TOKEN, "同意，执行时 Ontop 失败")
+finally:
+    server.shutdown()
+    worker.join()
+
+recovered = run([
+    "execute", "--id", str(created["id"]),
+    "--action", "cancel_order", "--order", "102", "--event", "E99",
+    "--assigned-role", "采购主管", "--description", "无法交付", "--evidence", "{}",
+])
+again = run(["execute", "--id", str(created["id"]), "--description", "无法交付"])
+print(json.dumps({
+    "failed_status": failed["execution_status"],
+    "failed_attempts": len(failed["attempts"]),
+    "retry_status": recovered["execution_status"],
+    "task_order": recovered["task"]["order"],
+    "task_event": recovered["task"]["event"],
+    "task_description": recovered["task"]["description"],
+    "attempt_outcomes": [item["outcome"] for item in recovered["attempts"]],
+    "repeat_same_task": again["task"]["id"] == recovered["task"]["id"],
+    "repeat_same_attempts": len(again["attempts"]) == len(recovered["attempts"]),
+}, ensure_ascii=False))
+'
+```
+
+期望摘要为：`failed_status` 是 `FAILED`，`failed_attempts` 是 1，`retry_status` 是 `SUCCEEDED`，任务订单和事件是 101 与 E01，描述是「订单 101 因事件 E01 需要供应风险复核。」，`attempt_outcomes` 是 `FAILED` 与 `SUCCEEDED`，再次执行的任务和尝试条数与重试相同。
 
 MCP 进程仅收到 `decision_agent` 数据库账号，它可读取决策并插入证据、绑定编号、系统描述和说明列；状态、占位和时间由数据库默认值产生。它没有更新、删除或源表写权限。推理查询和建议提交共享的推理调用在进程内串行执行，避免 RDFLib/pyparsing 共享解析器的线程竞争；数据库唯一约束独立保证跨请求、跨进程占位去重，每次操作仍独占自己的连接。批准和执行复用这把推理锁。
 
