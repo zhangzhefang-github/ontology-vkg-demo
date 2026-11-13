@@ -68,7 +68,7 @@ pyparsing==3.3.2
 - **可显式选择 READ COMMITTED。** InnoDB 默认是 REPEATABLE READ；本项目按唯一编号锁定现有行，以锁定读和哈希复核保证正确性。推荐 RC 使事务行为明确并减少不必要的间隙锁；它不是规格强制条件，也不能替代唯一约束、固定锁序和完整重试。死锁、锁等待超时应按技术失败处理，不能记成业务拒绝或业务失效。[隔离级别](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html)
 - **两个库指同实例的两个 schema。** `decision_loop` 与 `procurement` 的相关表都使用 InnoDB；同一连接使用限定表名写入，实现一次执行事务的原子提交，不引入跨实例事务或 XA。任务引用审批记录的跨 schema 外键、列类型、索引及初始化顺序必须真实验收；两库共同备份并按依赖恢复。[MySQL 事务](https://dev.mysql.com/doc/refman/8.4/en/commit.html)、[外键要求](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)、[#6](https://github.com/zhangzhefang-github/ontology-vkg-demo/issues/6)
 - **一份操作实现、两个薄适配。** 身份校验、证据、事务、状态与错误语义集中在决策模块；MCP 只注册查询和提交建议，CLI 提供人工操作。公开测试面就是 #6 指定的模块操作；私有函数调用、SQL 文本、MCP 帧和 CLI 参数不作为新的业务断言面。
-- **运行环境隔离要完整。** 新依赖在独立镜像；Compose 隔离须覆盖 project、卷、网络、宿主端口、镜像标签和清理范围。worktree 本身不隔离 Docker 资源。真实集成实验串行运行，管理账号只在测试夹具中模拟业务变化并恢复，不让新验收修改既有演示数据。[仓库已有环境评估](sandcastle-assessment.md)、[Compose 项目名](https://docs.docker.com/compose/how-tos/project-name/)、[#6](https://github.com/zhangzhefang-github/ontology-vkg-demo/issues/6)
+- **运行环境隔离要完整。** 新依赖在独立镜像；Compose 隔离须覆盖 project、卷、网络、宿主端口、镜像标签和清理范围。worktree 本身不隔离 Docker 资源。真实集成实验串行运行，管理账号只在测试夹具中模拟业务变化并恢复，不让新验收修改既有演示数据。[Compose 项目名](https://docs.docker.com/compose/how-tos/project-name/)、[#6](https://github.com/zhangzhefang-github/ontology-vkg-demo/issues/6)
 
 这套方案不需要新增 ORM、HTTP 框架、消息队列、工作流框架或缓存。选择显式 SQL 是为了让列级授权、锁与事务和规格逐项对应，不是声称 ORM 做不到这些。
 
