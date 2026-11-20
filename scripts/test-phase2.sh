@@ -33,7 +33,7 @@ run_reasoner() {
   docker compose --profile phase2 run --rm reasoner "$@"
 }
 
-docker compose up -d mysql
+docker compose up -d --wait --wait-timeout 240 mysql
 bash scripts/migrate-phase2.sh
 docker compose --profile phase2 build reasoner
 restore_event
