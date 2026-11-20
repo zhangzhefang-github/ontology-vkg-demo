@@ -25,8 +25,8 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
-      - name: Start MySQL and Ontop
-        run: docker compose up -d --build --wait --wait-timeout 240
+      - name: Start MySQL and Ontop through the documented demo
+        run: bash scripts/demo-phase2.sh
 
       - name: Verify Phase 1 SQL and SPARQL
         run: |

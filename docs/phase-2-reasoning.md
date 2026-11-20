@@ -21,7 +21,7 @@
 新数据卷由 [`sql/init.sql`](../sql/init.sql) 初始化。已有数据卷使用幂等迁移：
 
 ```bash
-docker compose up -d mysql
+docker compose up -d --wait --wait-timeout 240 mysql
 bash scripts/migrate-phase2.sh
 ```
 
